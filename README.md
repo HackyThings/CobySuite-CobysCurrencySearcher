@@ -33,7 +33,7 @@ Edge cases it handles:
 
 ## Install
 
-**CurseForge:** https://www.curseforge.com/wow/addons/cobys-currency-searcher
+**CurseForge:** https://www.curseforge.com/wow/addons/currency-searcher
 
 **Manual:** Drop the `CobysCurrencySearcher` folder into your `Interface/AddOns/`. No dependencies.
 
@@ -98,5 +98,5 @@ For bug reports, the cleanest path is the debug log. It's self-contained: it inc
 **Other channels:**
 
 - **BugSack errors:** whisper the report straight to **Figment-Illidan** in-game. BugSack copies the stack trace for you. Mention how to reproduce if you can.
-- **CurseForge comments:** drop a note on the [project page](https://www.curseforge.com/wow/addons/cobys-currency-searcher). Best for general feedback and quick questions.
+- **CurseForge comments:** drop a note on the [project page](https://www.curseforge.com/wow/addons/currency-searcher). Best for general feedback and quick questions.
 - **GitHub issues:** [open one here](https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/issues). Best for reproducible bugs and feature proposals where back-and-forth helps. Attach the debug-log paste here too if it's relevant.
