@@ -1,17 +1,21 @@
 ## Interface: 120100
 ## Title: Coby's Currency Searcher
-## Version: 1.0.0
+## Version: 1.0.1
 ## Author: Cobanyte
 ## Notes: Adds a search box to the Currency tab. Finds currencies inside collapsed headers and filters the list without gaps.
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01
-## SavedVariables: COBYS_CURRENCY_SEARCHER_CONFIG, COBYS_CURRENCY_SEARCHER_WINDOW_STATE, COBYS_CURRENCY_SEARCHER_DEBUG_LOG
+## SavedVariables: COBYS_CURRENCY_SEARCHER_CONFIG, COBYS_CURRENCY_SEARCHER_WINDOW_STATE, COBYS_CURRENCY_SEARCHER_DEBUG_LOG, COBYS_CURRENCY_SEARCHER_FAVORITES
 
 # Embedded CobySuite Library
 Libs\CobySuite\Source\Core.lua
 Libs\CobySuite\Source\EventBus.lua
 Libs\CobySuite\Source\Utilities\Main.lua
+Libs\CobySuite\Source\Chat\Main.lua
+Libs\CobySuite\Source\Slash\Main.lua
 Libs\CobySuite\Source\Config\Main.lua
 Libs\CobySuite\Source\UI\Factories.lua
+Libs\CobySuite\Source\UI\Window.lua
+Libs\CobySuite\Source\UI\FilterMenu.lua
 Libs\CobySuite\Source\UI\FormLayout.lua
 Libs\CobySuite\Source\Debug\Logger.lua
 Libs\CobySuite\Source\Debug\Window.lua
@@ -30,6 +34,9 @@ Source\Utilities\Main.lua
 # Config
 Source\Config\Main.lua
 Source\Config\Window.lua
+
+# Favorites
+Source\Favorites\Main.lua
 
 # Search
 Source\Search\Main.lua

@@ -35,33 +35,121 @@
 --   * A header whose own name matches keeps its whole group. Otherwise a
 --     header is kept only when at least one descendant matches. Collapsing a
 --     header inside the results only hides its rows in the results.
---   * Clicking a result selects that currency in Blizzard's own list, with
---     Blizzard's real options popup open, so Transfer works. The click lands
---     on an InsecureActionButtonTemplate child whose macro flips the
---     character window away and back (a secure rebuild) and /clicks a
---     delegate that our Update hook aims at the target's row; see "Secure
---     result click" below. Modified clicks (link, backpack toggle) and clicks
---     in combat are handled by our own code; in combat our replica popup
---     covers Unused and Show on Backpack, and its Transfer button hands off
---     to the list.
+--   * The filter icon (funnel) beside the box opens a small menu of
+--     checkbox filters (Transferable: currencies that can move between the
+--     characters of a Warband). A filter narrows the results with or
+--     without search text; headers then stay only for the rows they still
+--     contain. Filters last for the session and, like the text, are
+--     cleared by a result click.
+--   * Every currency row, in Blizzard's list and in the results, carries a
+--     star at its right edge (filled for favorites, empty for the rest)
+--     that marks the currency as a favorite, saved account-wide. The
+--     Favorites filter shows only starred currencies, in their usual order.
+--     The star is a child button attached by a hooksecurefunc post-hook on
+--     TokenEntryMixin:Initialize, kept in our own table; a Blizzard row is
+--     only read, never written to (see "Favorite star").
+--   * Clicking a result opens our own options popup (a replica of
+--     TokenFramePopup) and the results stay. Unused and Show on Backpack
+--     work from it directly (unprotected calls). Its Transfer button is the
+--     one action that has to reach Blizzard's own UI: it stashes the
+--     search, runs a secure macro that flips the character window away and
+--     back (a clean rebuild), /clicks the target's row through a delegate
+--     and then /clicks Blizzard's transfer toggle through a second delegate,
+--     so Blizzard's popup and the transfer menu open for that currency; see
+--     "Secure transfer hand-off" below. The search and filters come straight
+--     back in the same click, with the transfer menu open beside the window.
 --
 -- Blizzard only rebuilds its list from Update(); nothing on the frame listens
 -- to CURRENCY_DISPLAY_UPDATE. We post-hook Update() only to refresh our own
--- results when their data changes, never to touch theirs.
+-- results when their data changes, never to touch theirs. While the overlay
+-- is up, quantity changes (CURRENCY_DISPLAY_UPDATE with a currencyType)
+-- refresh our results too.
 -------------------------------------------------------------------------------
 
 local Debug = CobysCurrencySearcher.Debug
 local Config = CobysCurrencySearcher.Config
 local Utilities = CobysCurrencySearcher.Utilities
+local Favorites = CobysCurrencySearcher.Favorites
 local U = CobySuite.Utilities
+local UI = CobySuite.UI
 
 local Search = {}
 CobysCurrencySearcher.Search = Search
 
 local DEBOUNCE_SECONDS = 0.2
-local BOX_WIDTH = 150     -- spans from just right of the portrait to the filter dropdown
-local BOX_GAP = 6         -- gap between the box and the filter dropdown
+local BOX_WIDTH = 117     -- from just right of the portrait to the filter icon
+local BOX_GAP = 5         -- search box to the funnel
+local ICON_GAP = 3        -- funnel to the settings gear
+local DROPDOWN_GAP = 6    -- settings gear to Blizzard's dropdown
 local MAX_LETTERS = 50
+
+-- The funnel and its menu come from CobySuite.UI.CreateFilterButton (the
+-- objective tracker's 18x19 funnel, MenuStyle1 menu). The settings gear
+-- beside it is CobySuite.UI.CreateFilterStyleButton: the funnel's own badge
+-- with the raid manager's settings glyph (GM-icon-settings,
+-- Blizzard_CompactRaidFrameManager.xml) drawn over it in the funnel's gold.
+local SETTINGS_GLYPH_ATLAS = "GM-icon-settings"
+local SETTINGS_GLYPH_INSET = -1   -- the glyph atlas is padded for a 40px button
+
+-- Favorite stars (CobySuite.UI.CreateFavoriteStar, the auction house star)
+-- sit at the left edge of every row. Blizzard's account-wide / transferable
+-- icon, which shows in that slot on hover and selection, moves right of the
+-- star and the name follows it as in Blizzard's template. The backpack
+-- check keeps its own slot right of the currency icon.
+local STAR_HEIGHT = 16
+local STAR_LEFT_X = 4             -- star at the row's left edge
+local ACCOUNT_ICON_GAP = 0        -- between the star and the account-wide icon's frame
+local FLAT_GROUP_COLOR = "808080" -- the group name after a flat result's name
+local EMPTY_LABEL_WIDTH = 240
+
+-- Each filter keeps a currency row only when test(row) is true. Headers then
+-- stay only for the rows they still contain.
+local FILTER_DEFS = {
+  {
+    key = "favorites",
+    label = "Favorites",
+    tooltip = "Only the currencies you starred. Click the star at the start of any currency row.",
+    test = function(data) return Favorites ~= nil and Favorites.IsFavorite(data.currencyID) end,
+  },
+  {
+    key = "transferable",
+    label = "Transferable",
+    tooltip = "Only currencies that can be transferred between the characters of your Warband.",
+    test = function(data) return data.isAccountTransferable == true end,
+  },
+  {
+    key = "owned",
+    label = "Owned",
+    tooltip = "Only currencies with a balance above zero.",
+    test = function(data) return (data.quantity or 0) > 0 end,
+  },
+  {
+    key = "capped",
+    label = "Capped",
+    tooltip = "Only currencies at their maximum, or at this week's cap.",
+    test = function(data)
+      local max = data.maxQuantity or 0
+      if max > 0 then
+        local held = data.useTotalEarnedForMaxQty and (data.totalEarned or 0) or (data.quantity or 0)
+        if held >= max then return true end
+      end
+      local weeklyMax = data.maxWeeklyQuantity or 0
+      return data.canEarnPerWeek == true and weeklyMax > 0 and (data.quantityEarnedThisWeek or 0) >= weeklyMax
+    end,
+  },
+  {
+    key = "weekly",
+    label = "Weekly",
+    tooltip = "Only currencies with a weekly earning limit.",
+    test = function(data) return data.canEarnPerWeek == true end,
+  },
+  {
+    key = "backpack",
+    label = "On Backpack",
+    tooltip = "Only currencies shown on the backpack bar.",
+    test = function(data) return data.isShowInBackpack == true end,
+  },
+}
 
 -- Blizzard's list geometry (TokenFrameMixin:OnLoad), mirrored exactly.
 local LIST_PADDING = 10
@@ -73,19 +161,27 @@ local POPUP_HEIGHT_DEFAULT = 100
 local POPUP_HEIGHT_TRANSFER_ONLY = 90
 local POPUP_HEIGHT_FULL = 135
 
--- Macro run on a secure path by a result row's click (see "Secure result
--- click"). Under the 255-character limit of 11.0.2 by a wide margin.
-local RESULT_MACRO = "/click CharacterFrameTab1\n/click CharacterFrameTab3\n/click CobysCurrencySearcherClickStep"
+-- Macro run on a secure path by the popup's Transfer button (see "Secure
+-- transfer hand-off"). Under the 255-character limit of 11.0.2 by a wide
+-- margin.
+local TRANSFER_MACRO = "/click CharacterFrameTab1\n/click CharacterFrameTab3\n/click CobysCurrencySearcherClickStep\n/click CobysCurrencySearcherTransferStep"
 
 local searchBox
 local emptyLabel
-local query = ""           -- normalized active query; "" when no search is active
-local debounceTimer
+local query = ""           -- normalized active query; "" when no search text is active
+local filters = {}         -- filter key -> true while that filter is on (see FILTER_DEFS)
+local stars = setmetatable({}, { __mode = "k" })  -- row frame -> its star button; Blizzard's rows and ours
+local watchedOverrides = {}  -- currencyID -> watched, set by our popup until Blizzard's next rebuild (see SetWatched)
+local resultRows = setmetatable({}, { __mode = "k" })  -- row frame -> true for rows of our results list
+local hoveredRow           -- row under the mouse, for the hover-only star mode
+local filterButton         -- our filter icon button, right of the search box
+local settingsButton       -- our settings gear, between the filter icon and Blizzard's dropdown
+local overlayActive = false  -- the results overlay is up: search text or a filter is active
+local RefreshFilterUI      -- defined under "Filter button and menu"
 
 local overlay              -- container covering Blizzard's ScrollBox + ScrollBar
 local resultsBox           -- our WowScrollBoxList
 local resultsBar           -- our MinimalScrollBar
-local pendingSearch        -- /ccs text waiting for the tab to be opened by hand
 local collapsedInResults = {}  -- header path key -> true, collapsed inside the results only
 local lastResults          -- array of row tables currently shown
 
@@ -93,9 +189,12 @@ local popup                -- our replica of TokenFramePopup
 local selectedCurrencyID   -- currency whose options popup is open (nil = none)
 local blizzardListStale = false  -- our popup reordered the underlying list; see SetUnused
 
-local clickStep            -- CobysCurrencySearcherClickStep, the /click delegate; created once
-local macroInFlight = false  -- true from a result row's PreClick to its PostClick
-local macroTarget          -- { currencyID, name, path, ancestors } for the click in flight
+local clickStep            -- CobysCurrencySearcherClickStep, the /click delegate for the row; created once
+local transferStep         -- CobysCurrencySearcherTransferStep, the /click delegate for Blizzard's transfer toggle; created once
+local macroInFlight = false  -- true from the Transfer button's PreClick to its PostClick
+local macroTarget          -- { currencyID, name, path, ancestors } for the hand-off in flight
+local stashedSearch        -- { text, filters } to bring back once the transfer menu is open
+local refreshQuantities    -- Coalesce handle for CURRENCY_DISPLAY_UPDATE refreshes (see OnCurrencyDisplayUpdate)
 local lastCollapsedKeys    -- header path keys that were collapsed at the last snapshot
 local restoreCollapsedKeys -- collapse state to put back on tab hide (nil = nothing to restore)
 
@@ -270,18 +369,73 @@ end
 -------------------------------------------------------------------------------
 -- Matching
 -------------------------------------------------------------------------------
+-- The list API (GetCurrencyListInfo) leaves description empty; the
+-- per-currency API has it. Looked up once per currency and kept for the
+-- session, and only while the option is on.
+local descriptions = {}   -- currencyID -> lowercased description ("" when none)
+
+local function DescriptionOf(data)
+  local id = data.currencyID
+  if not id then return "" end
+  local desc = descriptions[id]
+  if desc == nil then
+    desc = data.description
+    if not desc or desc == "" then
+      local info = C_CurrencyInfo.GetCurrencyInfo(id)
+      desc = info and info.description or ""
+    end
+    desc = strlower(desc)
+    descriptions[id] = desc
+  end
+  return desc
+end
+
 local function Matches(data, needle, matchDescriptions)
   local name = data.name
   if name and strfind(strlower(name), needle, 1, true) then
     return true
   end
-  if matchDescriptions then
-    local desc = data.description
-    if desc and desc ~= "" and strfind(strlower(desc), needle, 1, true) then
+  if matchDescriptions and not data.isHeader then
+    local desc = DescriptionOf(data)
+    if desc ~= "" and strfind(desc, needle, 1, true) then
       return true
     end
   end
   return false
+end
+
+local function AnyFilterActive()
+  return next(filters) ~= nil
+end
+
+local function PassesFilters(data)
+  for _, def in ipairs(FILTER_DEFS) do
+    if filters[def.key] and not def.test(data) then
+      return false
+    end
+  end
+  return true
+end
+
+-- A search is active, and the results overlay belongs up, whenever there is
+-- search text or a filter is on.
+local function IsSearchActive()
+  return query ~= "" or AnyFilterActive()
+end
+
+-- "'text' [Transferable]", for the log.
+local function SearchDescription()
+  local labels = {}
+  for _, def in ipairs(FILTER_DEFS) do
+    if filters[def.key] then
+      labels[#labels + 1] = def.label
+    end
+  end
+  local text = "'" .. query .. "'"
+  if #labels > 0 then
+    text = text .. " [" .. table.concat(labels, ", ") .. "]"
+  end
+  return text
 end
 
 local function MarkStackKept(stack, keep)
@@ -290,13 +444,16 @@ local function MarkStackKept(stack, keep)
   end
 end
 
--- Returns the subset of `rows` that matches `needle`, in list order, plus the
--- number of currency rows (non-headers) kept. Rows under a header the user
--- collapsed inside the results are left out.
+-- Returns the subset of `rows` that matches `needle` and passes the active
+-- filters, in list order, plus the number of currency rows (non-headers)
+-- kept. Rows under a header the user collapsed inside the results are left
+-- out. An empty needle matches every name, so a filter alone lists the
+-- whole filtered tab.
 local function BuildResults(rows, needle, matchDescriptions)
   local keep = {}
   local stack = {}   -- ancestry of the row being visited: { data, depth, force }
   local kept = 0
+  local filtered = AnyFilterActive()
 
   for _, data in ipairs(rows) do
     local depth = data.currencyListDepth or 0
@@ -310,12 +467,14 @@ local function BuildResults(rows, needle, matchDescriptions)
     if data.isHeader then
       local force = (#stack > 0 and stack[#stack].force) or Matches(data, needle, matchDescriptions)
       stack[#stack + 1] = { data = data, depth = depth, force = force }
-      if force then
+      -- A matching header keeps its whole group, unless a filter is on: then
+      -- it stays only for the rows that pass, like any other header.
+      if force and not filtered then
         MarkStackKept(stack, keep)
       end
     else
       local force = #stack > 0 and stack[#stack].force
-      if force or Matches(data, needle, matchDescriptions) then
+      if (force or Matches(data, needle, matchDescriptions)) and PassesFilters(data) then
         keep[data] = true
         kept = kept + 1
         MarkStackKept(stack, keep)
@@ -324,15 +483,16 @@ local function BuildResults(rows, needle, matchDescriptions)
   end
 
   local results = {}
+  local flat = Config.Get(Config.Options.FLAT_RESULTS)   -- currencies only, no headers
   local hiddenBelow   -- depth of the nearest results-collapsed header, or nil
   for _, data in ipairs(rows) do
     local depth = data.currencyListDepth or 0
     if hiddenBelow and depth <= hiddenBelow then
       hiddenBelow = nil
     end
-    if keep[data] and not hiddenBelow then
+    if keep[data] and not hiddenBelow and not (flat and data.isHeader) then
       results[#results + 1] = data
-      if data.isHeader and collapsedInResults[data.path] then
+      if data.isHeader and collapsedInResults[data.path] and not flat then
         hiddenBelow = depth
       end
     end
@@ -350,8 +510,11 @@ local function IsCurrencyDataReady()
   return true
 end
 
-local function SetEmptyLabelShown(shown)
+local function SetEmptyLabelShown(shown, text)
   if emptyLabel then
+    if text then
+      emptyLabel:SetText(text)
+    end
     emptyLabel:SetShown(shown)
   end
 end
@@ -371,7 +534,7 @@ end
 -- Rebuilds the results from a fresh snapshot. Safe to call at any time while
 -- a search is active; it never touches Blizzard's list.
 local function Refresh()
-  if query == "" or not resultsBox then return end
+  if not IsSearchActive() or not resultsBox then return end
 
   if not IsCurrencyDataReady() then
     -- Blizzard is showing its loading spinner; show nothing until the data
@@ -386,7 +549,11 @@ local function Refresh()
   local results, kept = BuildResults(rows, query, Config.Get(Config.Options.MATCH_DESCRIPTIONS))
   lastResults = results
   resultsBox:SetDataProvider(CreateDataProvider(results), ScrollBoxConstants.RetainScrollPosition)
-  SetEmptyLabelShown(kept == 0)
+  if kept == 0 and filters.favorites and Favorites.Count() == 0 then
+    SetEmptyLabelShown(true, "No favorites yet. Click the star at the start of any currency row.")
+  else
+    SetEmptyLabelShown(kept == 0, "No matching currencies")
+  end
 
   if popup and popup:IsShown() then
     local data = FindResult(selectedCurrencyID)
@@ -397,8 +564,8 @@ local function Refresh()
     end
   end
 
-  Debug.Log("SEARCH", "'%s': %d currencies, %d of %d rows shown (%d header(s) expanded for the snapshot)",
-    query, kept, #results, #rows, expanded)
+  Debug.Log("SEARCH", "%s: %d currencies, %d of %d rows shown (%d header(s) expanded for the snapshot)",
+    SearchDescription(), kept, #results, #rows, expanded)
 end
 
 -------------------------------------------------------------------------------
@@ -430,6 +597,16 @@ end
 
 local ShowPopupFor, TogglePopupFor, SetWatched   -- forward declarations
 
+-- Selection highlight on every result row, without a new snapshot.
+local function RefreshRowHighlights()
+  if not resultsBox then return end
+  resultsBox:ForEachFrame(function(frame)
+    if frame.RefreshHighlightVisuals then frame:RefreshHighlightVisuals() end
+  end)
+end
+
+-- A plain click opens our options popup and the results stay; only the
+-- popup's Transfer button ever leaves for Blizzard's list.
 local function OnEntryClick(self)
   local data = self.elementData
   local linkedToChat = false
@@ -439,8 +616,10 @@ local function OnEntryClick(self)
   if not linkedToChat then
     if IsModifiedClick("TOKENWATCHTOGGLE") then
       SetWatched(data, not data.isShowInBackpack)
+      Refresh()   -- the row's data changed
     else
       TogglePopupFor(data)
+      RefreshRowHighlights()
     end
   end
 
@@ -450,8 +629,134 @@ local function OnEntryClick(self)
   else
     ShowEntryTooltip(self)
   end
+end
 
-  Refresh()
+-------------------------------------------------------------------------------
+-- Favorite star
+--
+-- Every TokenEntryTemplate row, Blizzard's and ours, gets a star button as
+-- a child, created and refreshed from a hooksecurefunc post-hook on
+-- TokenEntryMixin:Initialize (InstallStarHook). The star is kept in `stars`,
+-- keyed by the row, never as a field on the row: a Blizzard row is only
+-- read (elementData) and given a child, so its data stays clean for the
+-- warband transfer path. The only other thing done to a row is moving its
+-- backpack check texture onto the currency icon (widget calls, no Lua
+-- writes) so the star can have the right-hand slot.
+-------------------------------------------------------------------------------
+-- The star reads the row's current elementData on every refresh, so a
+-- pooled row stays right as Blizzard reuses it for another currency. The
+-- star mode option decides whether it shows: on every row, on our result
+-- rows only, or only on the row under the mouse.
+local function StarShown(button)
+  local mode = Config.Get(Config.Options.STAR_MODE)
+  if mode == "results" then return resultRows[button] == true end
+  if mode == "hover" then
+    if hoveredRow == button then return true end
+    -- Starred currencies may keep their star without a hover.
+    local data = button.elementData
+    return Config.Get(Config.Options.STAR_KEEP_FAVORITES) == true
+      and data ~= nil and Favorites ~= nil and Favorites.IsFavorite(data.currencyID)
+  end
+  return true
+end
+
+local function RefreshStar(button)
+  local star = stars[button]
+  if not star then return end
+  star:Refresh()
+  star:SetShown(StarShown(button))
+end
+
+local function OnRowEnter(button)
+  local previous = hoveredRow
+  hoveredRow = button
+  RefreshStar(button)
+  -- Safety net: a row left through a child that swallowed its OnLeave.
+  if previous and previous ~= button then RefreshStar(previous) end
+end
+
+-- Moving onto the star fires the row's OnLeave (the star is a child button
+-- that takes the mouse), so the row counts as left only once the cursor is
+-- outside its whole area; leaving the star runs the same check.
+local function OnRowLeave(button)
+  if button:IsMouseOver() then return end
+  if hoveredRow == button then hoveredRow = nil end
+  RefreshStar(button)
+end
+
+local function CreateStar(button)
+  local star = UI.CreateFavoriteStar(button, {
+    height = STAR_HEIGHT,
+    point = { "LEFT", button, "LEFT", STAR_LEFT_X, 0 },
+    frameLevel = button:GetFrameLevel() + 6,   -- above the row's content
+    isFavorite = function()
+      local data = button.elementData
+      return data ~= nil and Favorites ~= nil and Favorites.IsFavorite(data.currencyID)
+    end,
+    onToggle = function(on)
+      local data = button.elementData
+      if not data then return end
+      Favorites.Set(data.currencyID, on)
+      if filters.favorites then
+        Refresh()   -- an unstarred row leaves a Favorites-filtered list
+      end
+    end,
+  })
+  stars[button] = star
+
+  -- Blizzard's account-wide / transferable icon appears in the left slot on
+  -- hover and selection, so it moves to the right of the star (a widget
+  -- anchor, no Lua write on the row). The name keeps Blizzard's own anchor
+  -- to that icon, so it shifts right by the star's width and no more. Once
+  -- per row frame.
+  local accountIcon = button.Content.AccountWideIcon
+  accountIcon:ClearAllPoints()
+  accountIcon:SetPoint("LEFT", star, "RIGHT", ACCOUNT_ICON_GAP, 0)
+  -- Hover tracking for the hover-only star mode; HookScript keeps the
+  -- row's own handlers (Blizzard's, or ours on result rows).
+  button:HookScript("OnEnter", OnRowEnter)
+  button:HookScript("OnLeave", OnRowLeave)
+  star:HookScript("OnLeave", function() OnRowLeave(button) end)
+  -- The account-wide icon takes the mouse too, and leaving the row from it
+  -- runs only Blizzard's icon OnLeave (which calls the row's mixin method,
+  -- not its script), so it gets the same check.
+  accountIcon:HookScript("OnLeave", function() OnRowLeave(button) end)
+end
+
+-- Post-hook on TokenEntryMixin:Initialize: runs for Blizzard's rows and
+-- ours after Blizzard's own initializer. No frame is created in combat
+-- (root rule); the next initialization out of combat catches up.
+-- A backpack toggle from our popup is mirrored onto the row's check texture
+-- until Blizzard's next rebuild (see SetWatched).
+local function ApplyWatchedOverride(row)
+  local data = row.elementData
+  local override = data and watchedOverrides[data.currencyID]
+  if override ~= nil then
+    row.Content.WatchedCurrencyCheck:SetShown(override)
+  end
+end
+
+local function OnEntryInitialized(row)
+  if not stars[row] and not InCombatLockdown() then
+    CreateStar(row)
+  end
+  RefreshStar(row)
+  ApplyWatchedOverride(row)
+end
+
+-- Stars and backpack checks on Blizzard's rows can go stale while the
+-- overlay covers them (a star clicked in the results, a backpack toggle
+-- from our popup). Their frames are only read here, plus the check's
+-- SetShown.
+local function RefreshBlizzardStars()
+  TokenFrame.ScrollBox:ForEachFrame(function(frame)
+    if stars[frame] then
+      RefreshStar(frame)
+    end
+    if frame.Content and frame.Content.WatchedCurrencyCheck then
+      ApplyWatchedOverride(frame)
+    end
+  end)
 end
 
 local function OnEntryEnter(self)
@@ -485,7 +790,7 @@ local function OnSubHeaderToggleClick(toggle)
   ToggleResultsHeader(toggle:GetParent().elementData)
 end
 
-local OnResultPreClick, OnResultPostClick   -- defined under "Secure result click"
+local OnTransferPreClick, OnTransferPostClick   -- defined under "Secure transfer hand-off"
 
 -- Initializers. The first acquisition of a pooled frame swaps the template's
 -- TokenFrame-bound scripts for ours; every acquisition then runs Blizzard's
@@ -493,35 +798,17 @@ local OnResultPreClick, OnResultPostClick   -- defined under "Secure result clic
 local function InitEntry(button, data)
   if not button.searcherReady then
     button.searcherReady = true
+    resultRows[button] = true
     button.IsSelected = EntryIsSelected
     button:SetScript("OnClick", OnEntryClick)
     button:SetScript("OnEnter", OnEntryEnter)
     button:SetScript("OnLeave", OnEntryLeave)
   end
-  if not button.clicker and not InCombatLockdown() then
-    -- Full-size insecure action button over the row. Its OnClick is
-    -- Blizzard's secure action handler, so the row macro runs on a secure
-    -- path (see "Secure result click"). Hover is forwarded to the row.
-    -- Not created in combat; the row's own OnClick (replica popup) covers
-    -- it until the next acquisition out of combat.
-    local clicker = CreateFrame("Button", nil, button, "InsecureActionButtonTemplate")
-    clicker:SetAllPoints()
-    clicker:SetFrameLevel(button:GetFrameLevel() + 5)
-    clicker:RegisterForClicks("LeftButtonUp")
-    clicker:SetAttribute("useOnKeyDown", false)
-    clicker:SetAttribute("type", "macro")
-    clicker:SetAttribute("macrotext", RESULT_MACRO)
-    -- Modified clicks never run the macro; PreClick handles them itself.
-    clicker:SetAttribute("shift-type*", "")
-    clicker:SetAttribute("ctrl-type*", "")
-    clicker:SetAttribute("alt-type*", "")
-    clicker:SetScript("PreClick", OnResultPreClick)
-    clicker:SetScript("PostClick", OnResultPostClick)
-    clicker:SetScript("OnEnter", function() OnEntryEnter(button) end)
-    clicker:SetScript("OnLeave", function() OnEntryLeave(button) end)
-    button.clicker = clicker
+  button:Initialize(data)   -- the mixin hook adds and refreshes the star
+  if data.path and data.path ~= "" and Config.Get(Config.Options.FLAT_RESULTS) then
+    -- Flat results carry their group after the name, dimmed.
+    button.Content.Name:SetText(data.name .. "  " .. U.WrapColor(FLAT_GROUP_COLOR, data.path))
   end
-  button:Initialize(data)
 end
 
 local function InitHeader(header, data)
@@ -544,6 +831,20 @@ end
 -- Overlay construction (geometry copied from TokenFrameMixin:OnLoad and the
 -- TokenFrame XML so the result is pixel-identical)
 -------------------------------------------------------------------------------
+-- Quantities change while the overlay is up (a transfer, a vendor), and
+-- Blizzard's list only refreshes from Update, so the results refresh
+-- themselves. Structural updates carry no currencyType and are ignored: the
+-- snapshot's own expand and collapse must never feed back into a refresh.
+local function OnCurrencyDisplayUpdate(_, _, currencyType)
+  if currencyType == nil or not IsSearchActive() then return end
+  refreshQuantities:Call()
+end
+refreshQuantities = U.Coalesce(DEBOUNCE_SECONDS, function()
+  if IsSearchActive() and TokenFrame:IsShown() then
+    Refresh()
+  end
+end)
+
 local function BuildOverlay()
   local blizzBox = TokenFrame.ScrollBox
   local blizzBar = TokenFrame.ScrollBar
@@ -558,6 +859,12 @@ local function BuildOverlay()
   overlay:SetFrameLevel(blizzBox:GetFrameLevel() + 20)
   overlay:EnableMouse(true)   -- swallow clicks so the faded list below gets none
   overlay:Hide()
+  overlay:SetScript("OnShow", function(self) self:RegisterEvent("CURRENCY_DISPLAY_UPDATE") end)
+  overlay:SetScript("OnHide", function(self)
+    self:UnregisterEvent("CURRENCY_DISPLAY_UPDATE")
+    refreshQuantities:Cancel()
+  end)
+  overlay:SetScript("OnEvent", OnCurrencyDisplayUpdate)
 
   resultsBox = CreateFrame("Frame", nil, overlay, "WowScrollBoxList")
   resultsBox:SetAllPoints(blizzBox)
@@ -570,7 +877,7 @@ local function BuildOverlay()
   local view = CreateScrollBoxListLinearView()
   view:SetElementIndentCalculator(function(elementData)
     local isTopLevelHeader = elementData.isHeader and elementData.currencyListDepth == 0
-    if isTopLevelHeader then
+    if isTopLevelHeader or Config.Get(Config.Options.FLAT_RESULTS) then
       return 0
     end
     -- We only slightly indent elements that are immediately under top level headers
@@ -597,6 +904,8 @@ local function BuildOverlay()
 
   local label = overlay:CreateFontString(nil, "OVERLAY", U.Fonts.BODY)
   label:SetPoint("CENTER", resultsBox, "CENTER", 0, 0)
+  label:SetWidth(EMPTY_LABEL_WIDTH)
+  label:SetJustifyH("CENTER")
   local gray = U.Colors.LABEL_GRAY
   label:SetTextColor(gray[1], gray[2], gray[3])
   label:SetText("No matching currencies")
@@ -624,14 +933,16 @@ local function HideOverlay()
   TokenFrame.ScrollBox:SetAlpha(1)
   TokenFrame.ScrollBar:SetAlpha(1)
   SetEmptyLabelShown(false)
+  RefreshBlizzardStars()
 end
 
 -------------------------------------------------------------------------------
 -- Options popup (replica of TokenFramePopup)
 --
--- Unused and Show on Backpack work from here. Transfer cannot: it hands the
--- user back to Blizzard's clean list, which is the only place a transfer can
--- start (see the file header).
+-- Unused and Show on Backpack work from here. Transfer cannot start here:
+-- its button runs the secure hand-off to Blizzard's clean list, the only
+-- place a transfer can start (see the file header and "Secure transfer
+-- hand-off").
 -------------------------------------------------------------------------------
 local TRANSFER_DISABLED_MESSAGES   -- built on first use (mirrors Blizzard_CurrencyTransfer.lua)
 
@@ -652,7 +963,7 @@ local function TransferDisabledMessage(dataReady, failureReason)
   return failureReason and TRANSFER_DISABLED_MESSAGES[failureReason] or nil
 end
 
-local TRANSFER_HANDOFF_TOOLTIP = "Opens the full list. Click the currency there to transfer. Out of combat, clicking a result selects it in the list with its options open instead."
+local TRANSFER_HANDOFF_TOOLTIP = "Opens the transfer menu for this currency. Your search stays. In combat, only Blizzard's list comes back."
 
 local function RefreshTransferButton(data)
   local button = popup.TransferButton
@@ -671,6 +982,11 @@ local function RefreshTransferButton(data)
   button:SetDisabledTooltip(TransferDisabledMessage(dataReady, failureReason), "ANCHOR_RIGHT")
   local hasDisabledTooltip = button:GetDisabledTooltip() ~= nil
   button:SetShown(button:IsEnabled() or (isValidCurrency and hasDisabledTooltip))
+  -- The secure clicker only covers an enabled button, so the disabled
+  -- tooltip still works.
+  if button.clicker then
+    button.clicker:SetShown(button:IsEnabled())
+  end
 end
 
 local function PopupBestHeight()
@@ -745,6 +1061,13 @@ SetWatched = function(data, watched)
     end
   end
   C_CurrencyInfo.SetCurrencyBackpackByID(data.currencyID, watched)
+  -- Blizzard's hidden rows keep the old check until their next rebuild, and
+  -- a rebuild from addon code would taint them for transfers (see the
+  -- file header), so the check texture is overridden instead: a widget call,
+  -- no Lua write, applied by the row hook and dropped at the next rebuild.
+  -- Their elementData stays stale until then, so the first modified click
+  -- on that row in Blizzard's list toggles against the old value.
+  watchedOverrides[data.currencyID] = watched
   Debug.Log("SEARCH", "%s %s on backpack", watched and "Showing" or "Hiding", data.name or "?")
   return true
 end
@@ -786,18 +1109,6 @@ local function OnBackpackClick(checkbox)
   end
   PlaySound(watched and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
   Refresh()
-end
-
-local function OnTransferClick()
-  local data = FindResult(selectedCurrencyID)
-  popup:Hide()
-  if not data then return end
-  local where = (data.path and data.path ~= "") and (" under " .. data.path) or ""
-  Utilities.Message(("To transfer %s, click it in the list%s."):format(data.name or "this currency", where))
-  Debug.Log("SEARCH", "Transfer handoff for %s", data.name or "?")
-  -- Clearing the box routes through SetQuery("") and hides the overlay, which
-  -- brings Blizzard's untouched list back.
-  SearchBoxTemplate_ClearText(searchBox)
 end
 
 local function BuildPopup()
@@ -852,7 +1163,6 @@ local function BuildPopup()
   transfer:SetPoint("LEFT", 23, 0)
   transfer:SetPoint("BOTTOM", 0, 25)
   transfer:SetText(CURRENCY_TRANSFER_TOGGLE_BUTTON_LABEL)
-  transfer:SetScript("OnClick", OnTransferClick)
   transfer:HookScript("OnEnter", function(self)
     if not self:IsEnabled() then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -861,6 +1171,35 @@ local function BuildPopup()
   end)
   transfer:HookScript("OnLeave", GameTooltip_Hide)
   f.TransferButton = transfer
+
+  -- Full-size insecure action button over Transfer. Its OnClick is
+  -- Blizzard's secure action handler, so TRANSFER_MACRO runs on a secure
+  -- path (see "Secure transfer hand-off"). Mouse events are forwarded so
+  -- the button underneath still presses, highlights and shows its tooltip.
+  local clicker = CreateFrame("Button", nil, transfer, "InsecureActionButtonTemplate")
+  clicker:SetAllPoints()
+  clicker:SetFrameLevel(transfer:GetFrameLevel() + 5)
+  clicker:RegisterForClicks("LeftButtonUp")
+  clicker:SetAttribute("useOnKeyDown", false)
+  clicker:SetAttribute("type", "macro")
+  clicker:SetAttribute("macrotext", TRANSFER_MACRO)
+  -- Modified clicks never run the macro.
+  clicker:SetAttribute("shift-type*", "")
+  clicker:SetAttribute("ctrl-type*", "")
+  clicker:SetAttribute("alt-type*", "")
+  clicker:SetScript("PreClick", OnTransferPreClick)
+  clicker:SetScript("PostClick", OnTransferPostClick)
+  local function Forward(script)
+    return function(_, ...)
+      local handler = transfer:GetScript(script)
+      if handler then handler(transfer, ...) end
+    end
+  end
+  clicker:SetScript("OnEnter", Forward("OnEnter"))
+  clicker:SetScript("OnLeave", Forward("OnLeave"))
+  clicker:SetScript("OnMouseDown", Forward("OnMouseDown"))
+  clicker:SetScript("OnMouseUp", Forward("OnMouseUp"))
+  transfer.clicker = clicker
 
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", -2, -2)
@@ -879,11 +1218,7 @@ local function BuildPopup()
     PlaySound(SOUNDKIT.IG_CHARACTER_INFO_CLOSE)
     f:UnregisterAllEvents()
     selectedCurrencyID = nil
-    if resultsBox then
-      resultsBox:ForEachFrame(function(frame)
-        if frame.RefreshHighlightVisuals then frame:RefreshHighlightVisuals() end
-      end)
-    end
+    RefreshRowHighlights()
   end)
   f:SetScript("OnEvent", function()
     local data = FindResult(selectedCurrencyID)
@@ -896,14 +1231,13 @@ end
 -------------------------------------------------------------------------------
 -- Query lifecycle
 -------------------------------------------------------------------------------
-local function SetQuery(text)
-  local newQuery = strlower(strtrim(text or ""))
-  if newQuery == query then return end
-
-  local wasEmpty = (query == "")
-  query = newQuery
-
-  if query == "" then
+-- Shows, refreshes or clears the results after the search text or a filter
+-- changed. Idempotent: only a change of IsSearchActive() shows or hides the
+-- overlay.
+local function ApplySearchState()
+  if not IsSearchActive() then
+    if not overlayActive then return end
+    overlayActive = false
     wipe(collapsedInResults)
     lastResults = nil
     HideOverlay()
@@ -921,7 +1255,8 @@ local function SetQuery(text)
     return
   end
 
-  if wasEmpty then
+  if not overlayActive then
+    overlayActive = true
     Debug.State("SEARCH", "Search started")
     ShowOverlay()
   end
@@ -931,44 +1266,99 @@ local function SetQuery(text)
   end
 end
 
-local function CancelDebounce()
-  if debounceTimer then
-    debounceTimer:Cancel()
-    debounceTimer = nil
-  end
+local function SetQuery(text)
+  local newQuery = strlower(strtrim(text or ""))
+  if newQuery == query then return end
+  query = newQuery
+  ApplySearchState()
 end
 
-local function ScheduleApply(text)
-  CancelDebounce()
-  if strtrim(text or "") == "" then
-    SetQuery("")
-    return
+-- Filters last for the session by default. With the FILTERS_PERSIST option
+-- on, every change is also written to SAVED_FILTERS (a fresh table each
+-- time; the saved one is never edited in place) and LoadPersistedFilters
+-- puts the set back at the next login.
+local function PersistFilters()
+  if not Config.Get(Config.Options.FILTERS_PERSIST) then return end
+  local saved = {}
+  for key, on in pairs(filters) do
+    saved[key] = on
   end
-  debounceTimer = C_Timer.NewTimer(DEBOUNCE_SECONDS, function()
-    debounceTimer = nil
-    if searchBox then
-      SetQuery(searchBox:GetText())
+  Config.Set(Config.Options.SAVED_FILTERS, saved)
+end
+
+local function SetFilter(key, on)
+  on = on and true or nil
+  if filters[key] == on then return end
+  filters[key] = on
+  Debug.State("SEARCH", "Filter '%s' %s", key, on and "on" or "off")
+  RefreshFilterUI()
+  PersistFilters()
+  ApplySearchState()
+end
+
+local function ClearFilters()
+  if not AnyFilterActive() then return end
+  wipe(filters)
+  Debug.State("SEARCH", "Filters cleared")
+  RefreshFilterUI()
+  PersistFilters()
+  ApplySearchState()
+end
+
+-- Runs once, after this addon's SavedVariables have loaded and before the
+-- tab has shown: the overlay state is set up here and the tab's first
+-- OnShow Update draws the filtered results.
+local function LoadPersistedFilters()
+  if not Config.Get(Config.Options.FILTERS_PERSIST) then return end
+  local saved = Config.Get(Config.Options.SAVED_FILTERS)
+  local loaded = {}
+  for _, def in ipairs(FILTER_DEFS) do   -- only keys that still exist
+    if saved[def.key] then
+      filters[def.key] = true
+      loaded[#loaded + 1] = def.key
     end
-  end)
+  end
+  if #loaded == 0 then return end
+  Debug.State("SEARCH", "Filters restored from the last session: %s", table.concat(loaded, ", "))
+  RefreshFilterUI()
+  ApplySearchState()
+end
+
+-- The search box debounces its own text (CobySuite.UI.CreateSearchBox); a
+-- pending apply is dropped whenever the search is cleared or restored by
+-- code, so it cannot land after the fact.
+local function CancelPendingSearch()
+  if searchBox then searchBox:CancelPendingSearch() end
 end
 
 -------------------------------------------------------------------------------
--- Secure result click
+-- Secure transfer hand-off
 --
--- A result row's click lands on an InsecureActionButtonTemplate child whose
--- OnClick is Blizzard's SecureActionButton_OnClick, so RESULT_MACRO runs on
--- a secure path: it flips the character window away from and back to the
--- Currency tab (TokenFrame's own OnShow rebuilds the list with clean rows),
--- then /clicks CobysCurrencySearcherClickStep, a click-type action button that the
--- Update post-hook has aimed at the target's row between the macro lines.
--- Blizzard's own row OnClick then opens Blizzard's real popup with clean
--- data, and Transfer works from it. Verified in-game on 2026-09-08.
+-- Our popup's Transfer button carries an InsecureActionButtonTemplate child
+-- whose OnClick is Blizzard's SecureActionButton_OnClick, so TRANSFER_MACRO
+-- runs on a secure path: it flips the character window away from and back
+-- to the Currency tab (TokenFrame's own OnShow rebuilds the list with clean
+-- rows), /clicks CobysCurrencySearcherClickStep, a click-type delegate that
+-- the Update post-hook has aimed at the target's row (Blizzard's row OnClick
+-- opens Blizzard's real popup and runs Update again), then /clicks
+-- CobysCurrencySearcherTransferStep, a second delegate that the same hook
+-- aims at the popup's transfer toggle once the popup is open for the
+-- target. Blizzard's transfer menu opens with clean data, and the transfer
+-- works from it. The row step was verified in-game on 2026-09-08, the
+-- toggle step on 2026-09-09.
 --
--- Before the macro, PreClick clears the search, records the user's collapse
--- state (restored when the tab hides) and folds every header except the
--- target's chain, so the rebuilt list has the target within its first
--- screen of rows. There is no secure way to scroll Blizzard's list, so a
--- target that still lands below the first screen is reported instead.
+-- Before the macro, PreClick stashes the search (text and filters), clears
+-- it, records the user's collapse state (restored when the tab hides) and
+-- folds every header except the target's chain, so the rebuilt list has the
+-- target within its first screen of rows. There is no secure way to scroll
+-- Blizzard's list, so a target that still lands below the first screen is
+-- reported instead. Once the transfer menu is open for the target (Blizzard
+-- hides its own options popup as the menu opens, so the popup is no sign of
+-- success), PostClick puts the stashed search straight back, all within the
+-- same click, so the user never sees Blizzard's list: the overlay covers it
+-- while the menu, a separate window with its own currency and source state
+-- set on the secure path, stays open beside the window. Blizzard hides that
+-- menu only from TokenFrame:Update, which the overlay never calls.
 -------------------------------------------------------------------------------
 local function ArmClickStep(row)
   if clickStep then
@@ -976,49 +1366,101 @@ local function ArmClickStep(row)
   end
 end
 
-local function PopupOpenFor(currencyID)
-  if not (TokenFramePopup and TokenFramePopup:IsShown() and TokenFrame.selectedID) then
-    return false
+local function ArmTransferStep(button)
+  if transferStep then
+    transferStep:SetAttribute("clickbutton", button)
   end
+end
+
+-- Blizzard's list has the currency selected (its row was clicked).
+local function SelectedCurrencyIs(currencyID)
+  if not TokenFrame.selectedID then return false end
   local info = C_CurrencyInfo.GetCurrencyListInfo(TokenFrame.selectedID)
   return info ~= nil and info.currencyID == currencyID
 end
 
--- Clears the search at once. The box's OnTextChanged can arrive a frame
--- later; SetQuery("") is idempotent, so that is harmless.
+local function PopupOpenFor(currencyID)
+  return TokenFramePopup ~= nil and TokenFramePopup:IsShown() and SelectedCurrencyIs(currencyID)
+end
+
+local function TransferMenuOpenFor(currencyID)
+  return CurrencyTransferMenu ~= nil and CurrencyTransferMenu:IsShown()
+    and CurrencyTransferMenu:GetCurrencyID() == currencyID
+end
+
+-- Clears the search text and the filters at once. The box's OnTextChanged
+-- can arrive a frame later; ApplySearchState is idempotent, so that is
+-- harmless.
 local function ClearSearchNow()
-  CancelDebounce()
+  CancelPendingSearch()
+  if filterButton then filterButton.Menu:Hide() end
+  if AnyFilterActive() then
+    wipe(filters)
+    RefreshFilterUI()
+    PersistFilters()
+  end
   if searchBox and searchBox:GetText() ~= "" then
     searchBox:SetText("")
   end
-  SetQuery("")
+  query = ""
+  ApplySearchState()
+end
+
+local function StashSearch()
+  local stash = {
+    text = searchBox and searchBox:GetText() or "",
+    filters = {},
+    scroll = resultsBox and resultsBox:GetScrollPercentage() or 0,
+  }
+  for key, on in pairs(filters) do
+    stash.filters[key] = on
+  end
+  stashedSearch = stash
+end
+
+-- Puts the stashed search back over Blizzard's list. A no-op once the tab
+-- is hidden: its OnHide clears the search anyway, and the stash with it.
+local function RestoreSearch()
+  local stash = stashedSearch
+  stashedSearch = nil
+  if not stash or not searchBox or not TokenFrame:IsVisible() then return end
+  wipe(filters)
+  for key, on in pairs(stash.filters) do
+    filters[key] = on
+  end
+  RefreshFilterUI()
+  PersistFilters()
+  CancelPendingSearch()
+  searchBox:SetText(stash.text)   -- OnTextChanged schedules the same query; harmless
+  query = strlower(strtrim(stash.text))
+  ApplySearchState()   -- refreshes the results and scrolls them to the top
+  if resultsBox then
+    -- Back to where the user was: the row they clicked Transfer on.
+    resultsBox:SetScrollPercentage(stash.scroll, ScrollBoxConstants.NoScrollInterpolation)
+  end
+  Debug.State("SEARCH", "Search restored with the transfer menu open: %s", SearchDescription())
+end
+
+-- In combat the insecure template refuses, so the hand-off is by hand: the
+-- search clears and the user clicks the currency in Blizzard's list.
+local function TransferHandoffInCombat(data)
+  local where = (data.path and data.path ~= "") and (" under " .. data.path) or ""
+  Utilities.Message(("In combat, transfers start from Blizzard's list: click %s there%s."):format(data.name or "this currency", where))
+  Debug.Log("SEARCH", "Transfer hand-off in combat for %s", data.name or "?")
+  ClearSearchNow()
 end
 
 -- Runs before the secure action. Modified clicks and clicks in combat never
 -- reach the macro (the modifier attributes are no-ops and the insecure
--- template refuses in combat), so they are handled here in full.
-OnResultPreClick = function(clicker)
-  local row = clicker:GetParent()
-  local data = row.elementData
+-- template refuses in combat).
+OnTransferPreClick = function()
+  local data = FindResult(selectedCurrencyID)
   if not data then return end
-  if IsModifiedClick("CHATLINK") then
-    HandleModifiedItemClick(C_CurrencyInfo.GetCurrencyLink(data.currencyID))
-    return
-  end
-  if IsModifiedClick("TOKENWATCHTOGGLE") then
-    SetWatched(data, not data.isShowInBackpack)
-    Refresh()
-    return
-  end
   if IsShiftKeyDown() or IsControlKeyDown() or IsAltKeyDown() then
-    return   -- some other modified click; the macro is a no-op for it too
+    return   -- modified click; the macro is a no-op for it too
   end
   if InCombatLockdown() then
-    -- The secure path is closed in combat; the replica popup covers Unused
-    -- and Show on Backpack, and its Transfer button hands off to the list.
-    TogglePopupFor(data)
-    if EntryIsSelected(row) then GameTooltip_Hide() else ShowEntryTooltip(row) end
-    Refresh()
+    TransferHandoffInCombat(data)
     return
   end
 
@@ -1029,83 +1471,98 @@ OnResultPreClick = function(clicker)
     ancestors = data.ancestors or {},
   }
   macroInFlight = true
-  -- Remember the collapse state from before the first click so the tab's
-  -- OnHide can put it back; later clicks keep the earliest record.
+  -- Remember the collapse state from before the first hand-off so the tab's
+  -- OnHide can put it back; later hand-offs keep the earliest record.
   if not restoreCollapsedKeys then
     restoreCollapsedKeys = {}
     for key in pairs(lastCollapsedKeys or {}) do
       restoreCollapsedKeys[key] = true
     end
   end
-  ClearSearchNow()
+  StashSearch()
+  ClearSearchNow()   -- hides the overlay and our popup
   GameTooltip_Hide()
   CollapseAllExcept(macroTarget.ancestors)
   ArmClickStep(nil)
-  Debug.State("SEARCH", "Result click: selecting %s in Blizzard's list", data.name or "?")
+  ArmTransferStep(nil)
+  Debug.State("SEARCH", "Transfer: selecting %s in Blizzard's list", data.name or "?")
 end
 
-OnResultPostClick = function()
+OnTransferPostClick = function()
   if not macroInFlight then return end
   macroInFlight = false
   ArmClickStep(nil)
+  ArmTransferStep(nil)
   local target = macroTarget
   macroTarget = nil
   if not target then return end
-  if PopupOpenFor(target.currencyID) then
-    Debug.Log("SEARCH", "%s selected; its options popup is open", target.name or "?")
+  if TransferMenuOpenFor(target.currencyID) then
+    -- Blizzard hides its own options popup once the menu is open, so the
+    -- menu, not the popup, is the sign that every macro line landed.
+    Debug.Log("SEARCH", "%s selected and the transfer menu is open", target.name or "?")
+    RestoreSearch()
+    return
+  end
+  if SelectedCurrencyIs(target.currencyID) then
+    -- The row was clicked but the toggle did not open the menu (no longer
+    -- transferable); the user stays on Blizzard's popup.
+    stashedSearch = nil
+    Debug.Warn("SEARCH", "%s selected but the transfer menu did not open", target.name or "?")
     return
   end
   -- The rebuilt list did not put the row on screen (it sits below the first
   -- screen even with every other header folded). The list is left folded
   -- around it so it is a short scroll away.
+  stashedSearch = nil
   local where = (target.path and target.path ~= "") and (" under " .. target.path) or ""
-  Utilities.Message(("%s is%s. Scroll down to it; the rest of the list is folded."):format(target.name or "That currency", where))
-  Debug.Warn("SEARCH", "Result click: %s was not within the first screen after the rebuild", target.name or "?")
+  Utilities.Message(("%s is%s. Scroll down to it and click it; the rest of the list is folded."):format(target.name or "That currency", where))
+  Debug.Warn("SEARCH", "Transfer: %s was not within the first screen after the rebuild", target.name or "?")
 end
 
 -- Post-hook on TokenFrame:Update(). Blizzard has just rebuilt its list from
--- fresh data. During a result click, aim the /click delegate at the target's
--- row (and disarm it once the popup is open); otherwise refresh our results
--- from the same data. Their frames are only ever read.
+-- fresh data. During a hand-off, aim the row delegate at the target's row,
+-- then, once Blizzard's popup is open for it, aim the transfer delegate at
+-- the popup's toggle; otherwise refresh our results from the same data.
+-- Their frames are only ever read.
 local function OnTokenFrameUpdated()
   blizzardListStale = false   -- any rebuild, theirs or ours, is fresh
+  wipe(watchedOverrides)      -- the rebuilt rows carry the real backpack state
   if macroInFlight and macroTarget then
     if PopupOpenFor(macroTarget.currencyID) then
+      -- The row step has clicked the row (its OnClick runs Update): the
+      -- last macro line clicks the transfer toggle.
       ArmClickStep(nil)
+      ArmTransferStep(TokenFramePopup.CurrencyTransferToggleButton)
     else
       local id = macroTarget.currencyID
       local row = TokenFrame.ScrollBox:FindFrameByPredicate(function(frame, elementData)
         return elementData ~= nil and not elementData.isHeader and elementData.currencyID == id
       end)
       ArmClickStep(row)
+      ArmTransferStep(nil)
     end
     return
   end
-  if query == "" then return end
+  if not IsSearchActive() then return end
   ShowOverlay()   -- re-assert the fade; harmless when already applied
   Refresh()
 end
 
--- Runs after Blizzard's own OnShow (and its clean Update). A search armed by
--- /ccs while the tab was closed starts here, so the tab is only ever
--- opened by the user's own action.
-local function OnTokenFrameShown()
-  if pendingSearch and searchBox then
-    local text = pendingSearch
-    pendingSearch = nil
-    searchBox:SetText(text)
-    searchBox:ClearFocus()
-  end
-end
-
+-- Clears the search text (unless the keep-text option is on); filters stay
+-- on for the session, so a tab reopened with a filter on shows the filtered
+-- list at once (Blizzard's OnShow Update reaches OnTokenFrameUpdated).
 local function OnTokenFrameHidden()
-  if macroInFlight then return end   -- the tab detour of a result click
-  CancelDebounce()
-  if searchBox and searchBox:GetText() ~= "" then
-    -- SetText("") fires OnTextChanged, which routes through SetQuery("").
-    SearchBoxTemplate_ClearText(searchBox)
-  elseif query ~= "" then
-    SetQuery("")
+  if filterButton then filterButton.Menu:Hide() end
+  if macroInFlight then return end   -- the tab detour of a transfer hand-off
+  stashedSearch = nil
+  if not Config.Get(Config.Options.KEEP_TEXT) then
+    CancelPendingSearch()
+    if searchBox and searchBox:GetText() ~= "" then
+      -- SetText("") fires OnTextChanged, which routes through SetQuery("").
+      SearchBoxTemplate_ClearText(searchBox)
+    elseif query ~= "" then
+      SetQuery("")
+    end
   end
   RestoreCollapseState()
 end
@@ -1113,37 +1570,62 @@ end
 -------------------------------------------------------------------------------
 -- Search box
 --
--- Uses Blizzard's SearchBoxTemplate directly (magnifier icon, "Search"
--- instructions, built-in clear button) so it looks native inside the
--- Blizzard frame. CobySuite.UI.CreateTextInput is intentionally not used:
--- its commit wiring makes Escape revert to the last committed value, which
--- is wrong for a live filter.
+-- CobySuite.UI.CreateSearchBox: Blizzard's SearchBoxTemplate as a live,
+-- debounced filter. An empty box applies at once, so it always means "no
+-- search", including programmatic clears (clear button, OnHide).
 -------------------------------------------------------------------------------
 local function BuildSearchBox()
-  local box = CreateFrame("EditBox", "CobysCurrencySearcherSearchBox", TokenFrame, "SearchBoxTemplate")
-  box:SetSize(BOX_WIDTH, U.EditBoxHeight.SEARCH)
-  -- One anchor: the vertical center comes from the dropdown and the left edge
-  -- lands at x = 64, clear of the character portrait.
-  box:SetPoint("RIGHT", TokenFrame.filterDropdown, "LEFT", -BOX_GAP, 0)
-  box:SetAutoFocus(false)
-  box:SetMaxLetters(MAX_LETTERS)
-  -- The template reads self.instructionText in OnLoad, which is only set
-  -- when the box comes from XML; set the placeholder ourselves.
-  box.Instructions:SetText(SEARCH or "Search")
+  return UI.CreateSearchBox(TokenFrame, {
+    name = "CobysCurrencySearcherSearchBox",
+    width = BOX_WIDTH,
+    -- One anchor: the vertical center comes from Blizzard's dropdown through
+    -- the two icons, and the left edge lands at x = 53, clear of the
+    -- character portrait.
+    point = { "RIGHT", filterButton, "LEFT", -BOX_GAP, 0 },
+    maxLetters = MAX_LETTERS,
+    debounce = DEBOUNCE_SECONDS,   -- the saved delay is applied once SavedVariables exist (Setup)
+    onSearch = function(text) SetQuery(text) end,
+  })
+end
 
-  box:SetScript("OnTextChanged", function(self)
-    -- Keep the template's icon/clear-button behavior, then filter. This
-    -- also runs for programmatic changes (clear button, OnHide), which is
-    -- intended: an empty box must always mean "no search".
-    SearchBoxTemplate_OnTextChanged(self)
-    ScheduleApply(self:GetText())
-  end)
-  box:SetScript("OnEscapePressed", function(self)
-    SearchBoxTemplate_ClearText(self)
-  end)
-  -- OnEnterPressed keeps the template's EditBox_ClearFocus.
+-------------------------------------------------------------------------------
+-- Filter button, settings gear
+--
+-- The funnel and its checkbox menu are CobySuite.UI.CreateFilterButton (the
+-- taint-isolated menu; Blizzard's pooled Menu frames are shared with the
+-- transfer menu on this tab). The gear beside it opens the settings window.
+-------------------------------------------------------------------------------
+RefreshFilterUI = function()
+  if filterButton then filterButton:Refresh() end
+end
 
-  return box
+local function BuildSettingsButton()
+  return UI.CreateFilterStyleButton(TokenFrame, {
+    name = "CobysCurrencySearcherSettingsButton",
+    -- Vertical center from Blizzard's dropdown, like the funnel and the box.
+    point = { "RIGHT", TokenFrame.filterDropdown, "LEFT", -DROPDOWN_GAP, 0 },
+    glyphAtlas = SETTINGS_GLYPH_ATLAS,
+    glyphInset = SETTINGS_GLYPH_INSET,
+    tooltip = "Settings",
+    onClick = function()
+      PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+      Config.ToggleSettings()
+    end,
+  })
+end
+
+local function BuildFilterButton()
+  return UI.CreateFilterButton(TokenFrame, {
+    name = "CobysCurrencySearcherFilterButton",
+    -- Vertical center from Blizzard's dropdown through the settings gear.
+    point = { "RIGHT", settingsButton, "LEFT", -ICON_GAP, 0 },
+    defs = FILTER_DEFS,
+    isChecked = function(key) return filters[key] == true end,
+    setChecked = SetFilter,
+    onClear = ClearFilters,
+    tooltipIdle = "Narrow the list, with or without search text.",
+    menu = { name = "CobysCurrencySearcherFilterMenu", parent = TokenFrame },
+  })
 end
 
 -------------------------------------------------------------------------------
@@ -1164,30 +1646,58 @@ local function Setup()
     return
   end
 
+  if not Favorites then
+    -- Only ever seen in development: a file added to the TOC is not read
+    -- by /reload, so Favorites/Main.lua has not loaded yet.
+    Debug.Warn("INIT", "Favorites module missing; the TOC was not re-read. Log out and back in")
+    Utilities.Message("The Favorites module did not load. Log out to the character screen and back in.")
+  end
+
   BuildOverlay()
   popup = BuildPopup()
+  settingsButton = BuildSettingsButton()
+  filterButton = BuildFilterButton()
   searchBox = BuildSearchBox()
 
-  -- The /click delegate of RESULT_MACRO (see "Secure result click"). Created
-  -- once: GetClickFrame caches the first object registered under a name.
-  clickStep = CreateFrame("Button", "CobysCurrencySearcherClickStep", UIParent, "InsecureActionButtonTemplate")
-  clickStep:SetSize(1, 1)
-  clickStep:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
-  clickStep:SetAlpha(0)
-  clickStep:RegisterForClicks("LeftButtonUp")
-  clickStep:SetAttribute("useOnKeyDown", false)
-  clickStep:SetAttribute("type", "click")
+  -- The /click delegates of TRANSFER_MACRO (see "Secure transfer hand-off").
+  -- Created once each: GetClickFrame caches the first object registered
+  -- under a name.
+  local function CreateDelegate(name)
+    local delegate = CreateFrame("Button", name, UIParent, "InsecureActionButtonTemplate")
+    delegate:SetSize(1, 1)
+    delegate:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
+    delegate:SetAlpha(0)
+    delegate:RegisterForClicks("LeftButtonUp")
+    delegate:SetAttribute("useOnKeyDown", false)
+    delegate:SetAttribute("type", "click")
+    return delegate
+  end
+  clickStep = CreateDelegate("CobysCurrencySearcherClickStep")
+  transferStep = CreateDelegate("CobysCurrencySearcherTransferStep")
 
   -- Hook the frame instance: the mixin methods are copied onto the frame,
   -- and every internal call goes through TokenFrame:Update(). The hook only
-  -- refreshes our results.
+  -- refreshes our results (and aims the delegates during a hand-off).
   hooksecurefunc(TokenFrame, "Update", OnTokenFrameUpdated)
-  TokenFrame:HookScript("OnShow", OnTokenFrameShown)
   TokenFrame:HookScript("OnHide", OnTokenFrameHidden)
+  TokenFrame:HookScript("OnShow", function()
+    -- Not during the transfer hand-off's tab detour.
+    if not macroInFlight and Config.Get(Config.Options.FOCUS_ON_OPEN) then
+      searchBox:SetFocus()
+    end
+  end)
 
   CobysCurrencySearcher.EventBus:Register(Search, { CobysCurrencySearcher.Events.ConfigChanged })
+  -- Setup runs while Blizzard_TokenUI loads, before this addon's own
+  -- SavedVariables exist; the saved search delay and the persisted filters
+  -- can only be read after our ADDON_LOADED (immediately when Setup was
+  -- deferred past it).
+  EventUtil.ContinueOnAddOnLoaded("CobysCurrencySearcher", function()
+    searchBox:SetSearchDelay(Config.Get(Config.Options.SEARCH_DELAY))
+    LoadPersistedFilters()
+  end)
 
-  Debug.Log("INIT", "Search box and results list installed on the Currency tab")
+  Debug.Log("INIT", "Search box, filter icon, settings gear and results list installed on the Currency tab")
 end
 
 -- Blizzard_TokenUI is not load-on-demand, but ContinueOnAddOnLoaded runs the
@@ -1195,14 +1705,45 @@ end
 -- is the safe way to sequence against it.
 EventUtil.ContinueOnAddOnLoaded("Blizzard_TokenUI", Setup)
 
+-- Star hook, installed as soon as Blizzard_TokenUI is loaded and without a
+-- combat gate (nothing is created here). Mixin copies the hooked function
+-- into every row created after this point, Blizzard's and ours, so each
+-- row gets its star on first use and a refresh on every reuse.
+local function InstallStarHook()
+  if TokenEntryMixin and TokenEntryMixin.Initialize then
+    hooksecurefunc(TokenEntryMixin, "Initialize", OnEntryInitialized)
+  else
+    Debug.Warn("INIT", "TokenEntryMixin is missing or changed shape; favorite stars not installed")
+  end
+end
+EventUtil.ContinueOnAddOnLoaded("Blizzard_TokenUI", InstallStarHook)
+
 -------------------------------------------------------------------------------
 -- EventBus
 -------------------------------------------------------------------------------
 function Search:ReceiveEvent(eventName, optionName)
   if eventName ~= CobysCurrencySearcher.Events.ConfigChanged then return end
-  -- Re-filter when the description option flips during an active search.
-  if (optionName == nil or optionName == Config.Options.MATCH_DESCRIPTIONS)
-      and query ~= "" and TokenFrame:IsShown() then
+  if optionName == Config.Options.SAVED_FILTERS then return end   -- our own write
+  -- Persistence switched: start saving the current set, or forget the saved one.
+  if optionName == nil or optionName == Config.Options.FILTERS_PERSIST then
+    if Config.Get(Config.Options.FILTERS_PERSIST) then
+      PersistFilters()
+    elseif next(Config.Get(Config.Options.SAVED_FILTERS)) ~= nil then
+      Config.Set(Config.Options.SAVED_FILTERS, {})
+    end
+  end
+  if optionName == nil or optionName == Config.Options.SEARCH_DELAY then
+    if searchBox then searchBox:SetSearchDelay(Config.Get(Config.Options.SEARCH_DELAY)) end
+  end
+  local starOption = optionName == Config.Options.STAR_MODE or optionName == Config.Options.STAR_KEEP_FAVORITES
+  if optionName == nil or starOption then
+    hoveredRow = nil
+    RefreshBlizzardStars()
+  end
+  -- Re-filter when an option that shapes the results flips during a search.
+  if (optionName == nil or optionName == Config.Options.MATCH_DESCRIPTIONS
+      or optionName == Config.Options.FLAT_RESULTS or starOption)
+      and IsSearchActive() and TokenFrame:IsShown() then
     Refresh()
   end
 end
@@ -1211,11 +1752,12 @@ end
 -- Public API
 -------------------------------------------------------------------------------
 
--- Searches for `text` on the Currency tab. If the tab is not open, the search
--- is armed and starts when the user opens it. The tab is never opened from
--- addon code: ToggleCharacter would run TokenFrame's OnShow and its Update
--- inside our execution, and rows built that way cannot start a warband
--- transfer (see the file header).
+-- Opens the Currency tab if needed and searches for `text`. The open goes
+-- through ShowUIPanel, which shows the window on a secure path even when we
+-- call it, so the rows Blizzard builds on that OnShow are clean (verified
+-- in-game 2026-09-08: a transfer from a row of a tab opened this way works).
+-- ShowSubFrame on an already-open window would show the tab inside our
+-- execution instead, so the window is closed first in that case.
 function Search.OpenAndSearch(text)
   if not searchBox then
     Debug.Warn("SEARCH", "/ccs refused: search box not installed")
@@ -1225,13 +1767,19 @@ function Search.OpenAndSearch(text)
   text = strtrim(text or "")
   -- IsVisible, not IsShown: the tab can be shown inside a hidden character
   -- frame.
-  if TokenFrame:IsVisible() then
-    pendingSearch = nil
-    searchBox:SetText(text)
-    searchBox:ClearFocus()
+  if not TokenFrame:IsVisible() then
+    if CharacterFrame:IsShown() then
+      HideUIPanel(CharacterFrame)
+    end
+    ToggleCharacter("TokenFrame", true)
+  end
+  if not TokenFrame:IsVisible() then
+    -- ToggleCharacter is a no-op under the CharacterPanelDisabled game rule
+    -- and ShowUIPanel can refuse the panel.
+    Debug.Warn("SEARCH", "/ccs refused: the Currency tab could not be opened")
+    Utilities.Message("The Currency tab could not be opened here.")
     return
   end
-  pendingSearch = text
-  Utilities.Message(("Open the Currency tab to search for \"%s\"."):format(text))
-  Debug.Log("SEARCH", "Armed /ccs search for '%s' until the Currency tab opens", text)
+  searchBox:SetText(text)
+  searchBox:ClearFocus()
 end

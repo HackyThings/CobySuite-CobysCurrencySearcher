@@ -4,6 +4,25 @@ All notable changes to Coby's Currency Searcher are documented here. Format foll
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-09
+
+### Added
+
+- Favorites. Every currency row now starts with a star; click it to mark that currency. Blizzard's warband badge, which appears when you hover a transferable currency, sits right of the star. Stars are saved for your whole account and never change the order of the list. Tick "Favorites" in the filter menu to see only your starred currencies.
+- Filter icon (funnel) next to the search box. Tick "Transferable" to show only the currencies that can be transferred between the characters of your Warband, "Owned" to hide every currency you have none of, "Capped" for currencies at their maximum or this week's cap, "Weekly" for currencies with a weekly earning limit, or "On Backpack" for the ones on your backpack bar, with or without search text. Filters combine. A red x on the icon marks an active filter and clears it.
+- Settings gear beside the funnel; it opens the same window as `/ccs settings`.
+- "Filters persist between logins" setting, off by default. On, the filters you left ticked are back at your next login.
+- More settings: focus the search box when the tab opens, keep the search text while the window is closed, a search delay slider, flat results (currencies only, with their group dimmed after the name), and where the favorite star shows (every row, search results only, or only under the mouse, with starred currencies optionally keeping their star).
+
+### Fixed
+
+- "Match descriptions too" works: the currency list does not carry descriptions, so they are now fetched per currency.
+
+### Changed
+
+- Clicking a result now opens its options right in the results (Unused, Show on Backpack, Transfer) and the search stays. Transfer opens the transfer menu for that currency beside the window and your search stays put. Amounts in the results update as soon as a transfer lands.
+- `/ccs <text>` now opens the character window on the Currency tab and searches right away, instead of waiting for you to open the tab. Warband transfers from those results still work.
+
 ## [1.0.0] - 2026-09-08
 
 Initial release of Coby's Currency Searcher.

@@ -5,7 +5,7 @@
 CobysCurrencySearcher.Debug = CobySuite.Debug.NewLogger({
   addonName = "CobysCurrencySearcher",
   categories = {
-    "INIT", "CONFIG", "SEARCH", "DIAG",
+    "INIT", "CONFIG", "SEARCH", "FAVORITES", "DIAG",
   },
   savedVariable = "COBYS_CURRENCY_SEARCHER_DEBUG_LOG",
   sessionHeader = function(lines)

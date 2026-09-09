@@ -367,8 +367,12 @@ end
 ---------------------------------------------------------------------------
 -- CreateDialogPopup
 ---------------------------------------------------------------------------
+-- opts.name gives the popup a global name and closes it with Escape through
+-- UISpecialFrames, which works in combat. Without a name the older OnKeyDown
+-- handler is kept for compatibility; it raises ADDON_ACTION_BLOCKED on
+-- keystrokes while the popup is open in combat, so name new popups.
 function UI.CreateDialogPopup(opts)
-  local popup = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+  local popup = CreateFrame("Frame", opts.name, UIParent, "BackdropTemplate")
   popup:SetSize(opts.width or 320, opts.height or 120)
   popup:SetPoint("CENTER")
   popup:SetFrameStrata("DIALOG")
@@ -395,14 +399,18 @@ function UI.CreateDialogPopup(opts)
   popup.CancelButton:SetText("Cancel")
   popup.CancelButton:SetScript("OnClick", function() popup:Hide() end)
 
-  popup:SetScript("OnKeyDown", function(self, key)
-    if key == "ESCAPE" then
-      self:SetPropagateKeyboardInput(false)
-      self:Hide()
-    else
-      self:SetPropagateKeyboardInput(true)
-    end
-  end)
+  if opts.name then
+    tinsert(UISpecialFrames, opts.name)
+  else
+    popup:SetScript("OnKeyDown", function(self, key)
+      if key == "ESCAPE" then
+        self:SetPropagateKeyboardInput(false)
+        self:Hide()
+      else
+        self:SetPropagateKeyboardInput(true)
+      end
+    end)
+  end
 
   return popup
 end
@@ -423,13 +431,18 @@ end
 ---------------------------------------------------------------------------
 -- SaveWindowState / RestoreWindowState
 ---------------------------------------------------------------------------
+-- Writes position and size into svTable[key], keeping any other fields an
+-- addon stores in the same sub-table (a visibility flag, for instance).
 function UI.SaveWindowState(frame, svTable, key)
   if not frame or not svTable then return end
   local point, _, relativePoint, x, y = frame:GetPoint()
-  svTable[key] = {
-    point = point, relativePoint = relativePoint, x = x, y = y,
-    width = frame:GetWidth(), height = frame:GetHeight(),
-  }
+  local state = svTable[key]
+  if type(state) ~= "table" then
+    state = {}
+    svTable[key] = state
+  end
+  state.point, state.relativePoint, state.x, state.y = point, relativePoint, x, y
+  state.width, state.height = frame:GetWidth(), frame:GetHeight()
 end
 
 function UI.RestoreWindowState(frame, svTable, key, defaults)
@@ -545,6 +558,47 @@ local function ApplyPoint(widget, point)
 end
 
 ---------------------------------------------------------------------------
+-- Enabled-state wiring for labelled toggles (checkbox, radio)
+--
+-- Blizzard's check button templates only swap art for a checked disabled
+-- box, and the label FontString and its mouse overlay are ours, so
+-- SetEnabled / Enable / Disable are wrapped to grey the label and to stop
+-- the label from clicking through while the widget is disabled.
+---------------------------------------------------------------------------
+local function ApplyEnabledLook(widget, enabled)
+  if widget.text then
+    if enabled then
+      widget.text:SetTextColor(widget._labelR, widget._labelG, widget._labelB)
+    else
+      local c = U.Colors.DISABLED_GRAY
+      widget.text:SetTextColor(c[1], c[2], c[3])
+    end
+  end
+  if widget.labelHover then
+    widget.labelHover:EnableMouse(enabled)
+  end
+end
+
+local function WireEnabledState(widget)
+  if widget.text then
+    widget._labelR, widget._labelG, widget._labelB = widget.text:GetTextColor()
+  end
+  local SetEnabled, Enable, Disable = widget.SetEnabled, widget.Enable, widget.Disable
+  widget.SetEnabled = function(self, enabled)
+    SetEnabled(self, enabled)
+    ApplyEnabledLook(self, enabled)
+  end
+  widget.Enable = function(self)
+    Enable(self)
+    ApplyEnabledLook(self, true)
+  end
+  widget.Disable = function(self)
+    Disable(self)
+    ApplyEnabledLook(self, false)
+  end
+end
+
+---------------------------------------------------------------------------
 -- CreateCheckbox
 ---------------------------------------------------------------------------
 function UI.CreateCheckbox(parent, opts)
@@ -577,9 +631,10 @@ function UI.CreateCheckbox(parent, opts)
     cb.labelHover:SetAllPoints(cb.text)
     cb.labelHover:EnableMouse(true)
     cb.labelHover:SetScript("OnMouseUp", function(_, button)
-      if button == "LeftButton" then cb:Click() end
+      if button == "LeftButton" and cb:IsEnabled() then cb:Click() end
     end)
   end
+  WireEnabledState(cb)
 
   if opts.initialValue then cb:SetChecked(true) end
 
@@ -598,6 +653,49 @@ function UI.CreateCheckbox(parent, opts)
 
   cb._optionKey = opts.optionKey
   return cb
+end
+
+---------------------------------------------------------------------------
+-- CreateRadioButton
+--
+-- Blizzard's UIRadioButtonTemplate (16px circle) with a label on the right,
+-- styled like CreateCheckbox. Clicking a checked radio keeps it checked; the
+-- group logic (one of N) lives in FormLayout:RadioGroup or the caller.
+-- opts: name, label, labelFont, labelGap, tooltip, initialValue, optionKey,
+-- point, onChange(checked, self).
+---------------------------------------------------------------------------
+function UI.CreateRadioButton(parent, opts)
+  opts = opts or {}
+  local rb = CreateFrame("CheckButton", opts.name, parent, "UIRadioButtonTemplate")
+  ApplyPoint(rb, opts.point)
+  if opts.optionKey then rb.optionKey = opts.optionKey end
+
+  if opts.label then
+    rb.text:SetFontObject(opts.labelFont or U.Fonts.DATA)
+    rb.text:SetText(opts.label)
+    rb.text:ClearAllPoints()
+    rb.text:SetPoint("LEFT", rb, "RIGHT", opts.labelGap or 4, 0)
+    -- The label toggles the radio and shares its tooltip (see CreateCheckbox).
+    rb.labelHover = CreateFrame("Frame", nil, rb)
+    rb.labelHover:SetAllPoints(rb.text)
+    rb.labelHover:EnableMouse(true)
+    rb.labelHover:SetScript("OnMouseUp", function(_, button)
+      if button == "LeftButton" and rb:IsEnabled() then rb:Click() end
+    end)
+  end
+  WireEnabledState(rb)
+
+  rb:SetChecked(opts.initialValue == true)
+  rb:SetScript("OnClick", function(self)
+    self:SetChecked(true)   -- a radio never unchecks itself
+    if opts.onChange then opts.onChange(true, self) end
+  end)
+
+  if opts.tooltip then
+    UI.AddTooltip(rb, opts.tooltip, "ANCHOR_RIGHT")
+    if rb.labelHover then UI.AddTooltip(rb.labelHover, opts.tooltip, "ANCHOR_RIGHT") end
+  end
+  return rb
 end
 
 ---------------------------------------------------------------------------
@@ -719,13 +817,50 @@ end
 ---------------------------------------------------------------------------
 -- CreateIconButton
 ---------------------------------------------------------------------------
+-- Two icon sources: opts.texture (a file path, drawn on an ARTWORK texture)
+-- or opts.atlas (drawn as the button's own normal texture). With an atlas,
+-- opts.pushedAtlas (default: the same atlas) and opts.pushedShade (a grey
+-- level applied to it, e.g. 0.75) give the pressed look, and
+-- opts.highlightAtlas with opts.highlightBlend (default "ADD") and
+-- opts.highlightAlpha replace the flat colour highlight. opts.width /
+-- opts.height allow a non-square button (default opts.size, 22).
 function UI.CreateIconButton(parent, opts)
   opts = opts or {}
   local size = opts.size or 22
 
   local btn = CreateFrame("Button", opts.name, parent)
-  btn:SetSize(size, size)
+  btn:SetSize(opts.width or size, opts.height or size)
   ApplyPoint(btn, opts.point)
+
+  if opts.atlas then
+    btn:SetNormalAtlas(opts.atlas)
+    if opts.pushedAtlas or opts.pushedShade then
+      btn:SetPushedAtlas(opts.pushedAtlas or opts.atlas)
+    end
+    -- opts.atlasInset shrinks (positive) or grows (negative) the glyph past
+    -- the button's edges, for atlases with built-in padding; opts.vertexColor
+    -- tints it (the pushed texture is tinted the same, then shaded).
+    local inset = opts.atlasInset or 0
+    local color = opts.vertexColor
+    for _, tex in ipairs({ btn:GetNormalTexture(), btn:GetPushedTexture() }) do
+      if tex then
+        if inset ~= 0 then
+          tex:ClearAllPoints()
+          tex:SetPoint("TOPLEFT", inset, -inset)
+          tex:SetPoint("BOTTOMRIGHT", -inset, inset)
+        end
+        if color then
+          tex:SetVertexColor(color[1], color[2], color[3], color[4] or 1)
+        end
+      end
+    end
+    if opts.pushedShade then
+      local s = opts.pushedShade
+      local r, g, b = 1, 1, 1
+      if color then r, g, b = color[1], color[2], color[3] end
+      btn:GetPushedTexture():SetVertexColor(r * s, g * s, b * s)
+    end
+  end
 
   if opts.texture then
     local tex = btn:CreateTexture(nil, "ARTWORK")
@@ -741,7 +876,12 @@ function UI.CreateIconButton(parent, opts)
     btn._tex = tex
   end
 
-  if opts.highlight ~= false then
+  if opts.highlightAtlas then
+    btn:SetHighlightAtlas(opts.highlightAtlas, opts.highlightBlend or "ADD")
+    if opts.highlightAlpha then
+      btn:GetHighlightTexture():SetAlpha(opts.highlightAlpha)
+    end
+  elseif opts.highlight ~= false then
     local hl = btn:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints()
     local h = opts.highlight or { 1, 1, 1, 0.25 }
@@ -754,6 +894,147 @@ function UI.CreateIconButton(parent, opts)
   end
 
   return btn
+end
+
+---------------------------------------------------------------------------
+-- HideOnClickOutside
+--
+-- Hides `frame` on a mouse press anywhere outside it (and outside any
+-- `opts.owners`, typically the button that opened it), the way Blizzard's
+-- menus close. A child listener frame carries the GLOBAL_MOUSE_DOWN
+-- registration, so it follows the frame's visibility without touching the
+-- frame's own OnShow / OnHide / OnEvent scripts. The owner's own click then
+-- runs after the hide, so a toggle button still toggles.
+---------------------------------------------------------------------------
+function UI.HideOnClickOutside(frame, opts)
+  local owners = opts and opts.owners or {}
+  local listener = CreateFrame("Frame", nil, frame)
+  listener:SetScript("OnShow", function(self) self:RegisterEvent("GLOBAL_MOUSE_DOWN") end)
+  listener:SetScript("OnHide", function(self) self:UnregisterEvent("GLOBAL_MOUSE_DOWN") end)
+  listener:SetScript("OnEvent", function()
+    if frame:IsMouseOver() then return end
+    for _, owner in ipairs(owners) do
+      if owner:IsMouseOver() then return end
+    end
+    frame:Hide()
+  end)
+  if frame:IsVisible() then
+    listener:RegisterEvent("GLOBAL_MOUSE_DOWN")
+  end
+  return listener
+end
+
+---------------------------------------------------------------------------
+-- CreateSearchBox
+--
+-- Blizzard's SearchBoxTemplate (magnifier, "Search" placeholder, built-in
+-- clear button) wired as a live filter: opts.onSearch(text, box) runs
+-- opts.debounce seconds (default 0.2) after the last keystroke, and at once
+-- when the box empties (opts.immediateOnEmpty, default true), so an empty
+-- box always means "no search". It also runs for programmatic changes
+-- (clear button, SetText), which is intended. Escape clears the box;
+-- opts.onEscape replaces that. Not built on CreateTextInput on purpose: that
+-- one's commit lifecycle makes Escape revert to the last committed value.
+--
+-- opts: name, width (150), height (U.EditBoxHeight.SEARCH), point,
+-- maxLetters, placeholder (SEARCH), debounce, onSearch, onTextChanged(text,
+-- userInput), immediateOnEmpty, onEscape. The box gains
+-- :CancelPendingSearch() and :ClearSearch().
+---------------------------------------------------------------------------
+function UI.CreateSearchBox(parent, opts)
+  opts = opts or {}
+  local box = CreateFrame("EditBox", opts.name, parent, "SearchBoxTemplate")
+  box:SetSize(opts.width or 150, opts.height or U.EditBoxHeight.SEARCH)
+  ApplyPoint(box, opts.point)
+  box:SetAutoFocus(false)
+  if opts.maxLetters then box:SetMaxLetters(opts.maxLetters) end
+  -- The template reads self.instructionText in OnLoad, which is only set
+  -- when the box comes from XML; set the placeholder ourselves.
+  box.Instructions:SetText(opts.placeholder or SEARCH or "Search")
+
+  local pending = U.Debounce(opts.debounce or 0.2, function()
+    if opts.onSearch then opts.onSearch(box:GetText(), box) end
+  end)
+
+  box:SetScript("OnTextChanged", function(self, userInput)
+    SearchBoxTemplate_OnTextChanged(self)   -- the template's icon / clear-button state
+    local text = self:GetText()
+    if opts.onTextChanged then opts.onTextChanged(text, userInput, self) end
+    if opts.immediateOnEmpty ~= false and strtrim(text) == "" then
+      pending:Cancel()
+      if opts.onSearch then opts.onSearch(text, self) end
+    else
+      pending:Call()
+    end
+  end)
+  box:SetScript("OnEscapePressed", opts.onEscape or function(self)
+    SearchBoxTemplate_ClearText(self)
+  end)
+  -- OnEnterPressed keeps the template's EditBox_ClearFocus.
+
+  function box:CancelPendingSearch() pending:Cancel() end
+  function box:ClearSearch() SearchBoxTemplate_ClearText(self) end
+  function box:SetSearchDelay(seconds) pending:SetDelay(seconds) end
+  return box
+end
+
+---------------------------------------------------------------------------
+-- CreateFavoriteStar
+--
+-- The auction house favorite star (filled when set, the dim empty star
+-- otherwise, always visible, as on AH rows). opts.isFavorite() reports the
+-- state, opts.onToggle(on) applies a click; the star refreshes itself after
+-- the click and on :Refresh(). Width follows the atlas at opts.height
+-- (default 16). opts.tooltipOn / opts.tooltipOff override the texts.
+---------------------------------------------------------------------------
+local STAR_ATLAS_ON = "auctionhouse-icon-favorite"
+local STAR_ATLAS_OFF = "auctionhouse-icon-favorite-off"
+
+local function StarSize(height)
+  local info = C_Texture.GetAtlasInfo(STAR_ATLAS_ON)
+  if info and info.width and info.height and info.height > 0 then
+    return height * info.width / info.height, height
+  end
+  return height, height
+end
+
+function UI.CreateFavoriteStar(parent, opts)
+  opts = opts or {}
+  local star = CreateFrame("Button", opts.name, parent)
+  star:SetSize(StarSize(opts.height or 16))
+  ApplyPoint(star, opts.point)
+  if opts.frameLevel then star:SetFrameLevel(opts.frameLevel) end
+
+  local function IsFavorite()
+    return opts.isFavorite ~= nil and opts.isFavorite() == true
+  end
+
+  function star:Refresh()
+    local favorite = IsFavorite()
+    local atlas = favorite and STAR_ATLAS_ON or STAR_ATLAS_OFF
+    self:SetNormalAtlas(atlas)
+    self:SetHighlightAtlas(atlas, "ADD")
+    self:GetHighlightTexture():SetAlpha(favorite and 0.2 or 0.4)   -- as AuctionHouseFavoriteButtonBaseMixin
+  end
+
+  local function ShowTooltip(self)
+    GameTooltip:SetOwner(self, opts.tooltipAnchor or "ANCHOR_RIGHT")
+    GameTooltip:SetText(IsFavorite() and (opts.tooltipOn or "Remove from favorites")
+      or (opts.tooltipOff or "Add to favorites"))
+    GameTooltip:Show()
+  end
+
+  star:SetScript("OnClick", function(self)
+    local on = not IsFavorite()
+    if opts.onToggle then opts.onToggle(on) end
+    PlaySound(on and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
+    self:Refresh()
+    ShowTooltip(self)
+  end)
+  star:SetScript("OnEnter", ShowTooltip)
+  star:SetScript("OnLeave", GameTooltip_Hide)
+  star:Refresh()
+  return star
 end
 
 ---------------------------------------------------------------------------

@@ -258,6 +258,78 @@ function U.FormatDuration(seconds)
 end
 
 ---------------------------------------------------------------------------
+-- Timers: Debounce and Coalesce
+--
+-- Two ways to fold a burst of calls into one, both built on C_Timer:
+--
+--   local apply = U.Debounce(0.2, function(text) ... end)
+--   apply:Call(text)    -- restarts the delay; fn runs once, with the LAST call's arguments
+--
+--   local refresh = U.Coalesce(0.2, function() ... end)
+--   refresh:Call()      -- first call schedules; calls while pending are absorbed
+--
+-- Both handles have Cancel() (drop a pending run), IsPending(), Flush()
+-- (run a pending call now) and SetDelay(seconds) for a delay that comes
+-- from a setting. A delay of 0 runs on the next frame.
+---------------------------------------------------------------------------
+local function NewTimerHandle(delay, fn, restart)
+  local h = { _timer = nil, _args = nil, _delay = delay }
+
+  function h:SetDelay(seconds)
+    self._delay = seconds
+  end
+
+  local function Fire()
+    h._timer = nil
+    local args = h._args
+    h._args = nil
+    if args then
+      fn(unpack(args, 1, args.n))
+    else
+      fn()
+    end
+  end
+
+  function h:Call(...)
+    if self._timer then
+      if not restart then return end
+      self._timer:Cancel()
+    end
+    self._args = { n = select("#", ...), ... }
+    self._timer = C_Timer.NewTimer(self._delay, Fire)
+  end
+
+  function h:Cancel()
+    if self._timer then
+      self._timer:Cancel()
+      self._timer = nil
+    end
+    self._args = nil
+  end
+
+  function h:IsPending()
+    return self._timer ~= nil
+  end
+
+  function h:Flush()
+    if self._timer then
+      self._timer:Cancel()
+      Fire()
+    end
+  end
+
+  return h
+end
+
+function U.Debounce(delay, fn)
+  return NewTimerHandle(delay, fn, true)
+end
+
+function U.Coalesce(delay, fn)
+  return NewTimerHandle(delay, fn, false)
+end
+
+---------------------------------------------------------------------------
 -- Secure command detection
 ---------------------------------------------------------------------------
 function U.IsSecureCommand(text)

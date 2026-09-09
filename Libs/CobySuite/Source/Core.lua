@@ -10,5 +10,7 @@ CobySuite.UI        = CobySuite.UI or {}
 CobySuite.Debug     = CobySuite.Debug or {}
 CobySuite.Config    = CobySuite.Config or {}
 CobySuite.EventBus  = CobySuite.EventBus or {}
+CobySuite.Chat      = CobySuite.Chat or {}
+CobySuite.Slash     = CobySuite.Slash or {}
 
 CobySuite.SortDir = { ASC = "asc", DESC = "desc" }

@@ -1,9 +1,9 @@
 local Utilities = CobysCurrencySearcher.Utilities
-local U = CobySuite.Utilities
 
 ---------------------------------------------------------------------------
 -- Addon-specific: chat output (branded prefix)
 ---------------------------------------------------------------------------
-function Utilities.Message(message)
-  print(U.WrapColor(CobysCurrencySearcher.BRAND_COLOR, "[Coby's Currency Searcher]") .. " " .. message)
-end
+Utilities.Message = CobySuite.Chat.NewMessenger({
+  prefix = "[Coby's Currency Searcher]",
+  color = CobysCurrencySearcher.BRAND_COLOR,
+})

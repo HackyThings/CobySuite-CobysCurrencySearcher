@@ -131,12 +131,55 @@ function FormLayout:Checkbox(opts)
     initialValue = opts.initialValue,
     optionKey    = opts.optionKey,
     onChange     = opts.onChange,
-    point        = { "LEFT", self.parent, "TOPLEFT", self.layout.labelX, self.y },
+    point        = { "LEFT", self.parent, "TOPLEFT", self.layout.labelX + (opts.indent or 0), self.y },
   })
 
   self.y = self.y - (opts.rowHeight or self.layout.rowHeight)
   self.lastWidget = cb
   return cb, self.y
+end
+
+---------------------------------------------------------------------------
+-- Radio group — one UIRadioButtonTemplate row per option, exactly one
+-- checked. opts.options = { { value = "a", label = "...", tooltip = "..." } },
+-- opts.initialValue, opts.onChange(value), opts.indent, opts.rowHeight.
+-- Returns a group with :SetValue(v), :GetValue() and .buttons[value].
+---------------------------------------------------------------------------
+function FormLayout:RadioGroup(opts)
+  opts = opts or {}
+  local group = { buttons = {}, value = opts.initialValue }
+
+  function group:SetValue(value)
+    self.value = value
+    for v, rb in pairs(self.buttons) do
+      rb:SetChecked(v == value)
+    end
+  end
+
+  function group:GetValue()
+    return self.value
+  end
+
+  local x = self.layout.labelX + (opts.indent or 0)
+  for _, def in ipairs(opts.options or {}) do
+    local rb = UI.CreateRadioButton(self.parent, {
+      name         = def.name,
+      label        = def.label,
+      tooltip      = def.tooltip or opts.tooltip,
+      initialValue = def.value == opts.initialValue,
+      optionKey    = def.optionKey,
+      point        = { "LEFT", self.parent, "TOPLEFT", x, self.y },
+      onChange     = function()
+        group:SetValue(def.value)
+        if opts.onChange then opts.onChange(def.value) end
+      end,
+    })
+    group.buttons[def.value] = rb
+    self.y = self.y - (opts.rowHeight or self.layout.rowHeight)
+    self.lastWidget = rb
+  end
+
+  return group, self.y
 end
 
 ---------------------------------------------------------------------------

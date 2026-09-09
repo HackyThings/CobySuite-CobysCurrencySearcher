@@ -28,6 +28,10 @@ local DEFAULT_CATEGORY_BACKDROP = {
 -------------------------------------------------------------------------------
 local DebugWindowMixin = {}
 
+function DebugWindowMixin:Toggle()
+  self:SetShown(not self:IsShown())
+end
+
 function DebugWindowMixin:OnLoad()
   self.TitleText:SetText(self._title)
 
