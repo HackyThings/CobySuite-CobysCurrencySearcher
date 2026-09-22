@@ -26,8 +26,14 @@
 --     point = { "CENTER", UIParent, "CENTER", 0, 80 },   -- initial anchor for a window without persist
 --     mixin = MyWindowMixin,                   -- optional, applied before anything else
 --     onDragStop = function(f) end,            -- optional, after the state is saved
+--     onResizeStop = function(f) end,          -- optional, likewise after a resize
 --   })
---   f:SaveState()      f:RestoreState()      f:Toggle()
+--   Moving and sizing start on the left button and also end (state saved,
+--   callback run) when the window hides mid-drag. A resizable window is
+--   brought inside its bounds each time it shows and after RestoreState: a
+--   size saved before the bounds grew (by persist, or by the client's own
+--   layout cache for a named window the player moved) never hides content.
+--   f:SaveState()      f:RestoreState()      f:FitToBounds()      f:Toggle()
 --
 -- Escape: UISpecialFrames is the standard path (CloseSpecialWindows calls
 -- Hide() directly, so it works in combat). The OnKeyDown +
@@ -39,8 +45,8 @@
 -- Close button: BasicFrameTemplate's default routes through HideUIPanel,
 -- which silently no-ops in combat; the override is a plain Hide().
 ---------------------------------------------------------------------------
-local UI = CobySuite.UI
-local U = CobySuite.Utilities
+local UI = CobySuite_CobysCurrencySearcher.UI
+local U = CobySuite_CobysCurrencySearcher.Utilities
 
 local WindowMixin = {}
 
@@ -62,6 +68,19 @@ function WindowMixin:RestoreState()
   UI.RestoreWindowState(self, ResolveSV(persist), persist.key, persist.defaults)
   if persist.fixedSize then
     self:SetSize(self._width, self._height)
+  end
+  self:FitToBounds()
+end
+
+-- Brings the size inside the resize bounds (a resizable window only)
+function WindowMixin:FitToBounds()
+  local b = self._bounds
+  if not b then return end
+  local w, h = self:GetSize()
+  local fitW = math.min(math.max(w, b.minWidth), b.maxWidth)
+  local fitH = math.min(math.max(h, b.minHeight), b.maxHeight)
+  if fitW ~= w or fitH ~= h then
+    self:SetSize(fitW, fitH)
   end
 end
 
@@ -109,27 +128,67 @@ function UI.CreateWindow(opts)
     f.TitleText:SetText(opts.title)
   end
 
+  -- Moving and sizing start on the left button only (RegisterForDrag covers
+  -- the drag) and end the normal way, saving the state, on release or when
+  -- the window hides mid-drag (Escape, a close from code), so a drag that
+  -- loses its release still stops and saves. A child frame carries the
+  -- OnHide, so a window's own OnHide script cannot replace it.
+  local function StopMoving(self)
+    if not self._moving then return end
+    self._moving = false
+    self:StopMovingOrSizing()
+    self:SaveState()
+    if opts.onDragStop then opts.onDragStop(self) end
+  end
+
+  local function StopSizing(self)
+    if not self._sizing then return end
+    self._sizing = false
+    self:StopMovingOrSizing()
+    self:SaveState()
+    if opts.onResizeStop then opts.onResizeStop(self) end
+  end
+
   if opts.movable ~= false then
     f:SetMovable(true)
     f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", function(self) self:StartMoving() end)
-    f:SetScript("OnDragStop", function(self)
-      self:StopMovingOrSizing()
-      self:SaveState()
-      if opts.onDragStop then opts.onDragStop(self) end
+    f:SetScript("OnDragStart", function(self)
+      self._moving = true
+      self:StartMoving()
     end)
+    f:SetScript("OnDragStop", StopMoving)
   end
 
   if opts.resizable then
     local r = opts.resizable
+    f._bounds = {
+      minWidth = r.minWidth or 200, minHeight = r.minHeight or 150,
+      maxWidth = r.maxWidth or 1600, maxHeight = r.maxHeight or 1000,
+    }
     f:SetResizable(true)
-    f:SetResizeBounds(r.minWidth or 200, r.minHeight or 150, r.maxWidth or 1600, r.maxHeight or 1000)
+    f:SetResizeBounds(f._bounds.minWidth, f._bounds.minHeight, f._bounds.maxWidth, f._bounds.maxHeight)
     f.ResizeGrip = UI.CreateResizeGrip(f)
-    f.ResizeGrip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
-    f.ResizeGrip:SetScript("OnMouseUp", function()
-      f:StopMovingOrSizing()
-      f:SaveState()
-      if opts.onResizeStop then opts.onResizeStop(f) end
+    f.ResizeGrip:SetScript("OnMouseDown", function(_, button)
+      if button ~= "LeftButton" then return end
+      f._sizing = true
+      f:StartSizing("BOTTOMRIGHT")
+    end)
+    f.ResizeGrip:SetScript("OnMouseUp", function(_, button)
+      if button ~= "LeftButton" then return end
+      StopSizing(f)
+    end)
+  end
+
+  if opts.movable ~= false or opts.resizable then
+    local hideWatcher = CreateFrame("Frame", nil, f)
+    hideWatcher:SetScript("OnHide", function()
+      StopMoving(f)
+      StopSizing(f)
+    end)
+    -- The child shows with the window, and a window's own OnShow script
+    -- cannot replace this one
+    hideWatcher:SetScript("OnShow", function()
+      f:FitToBounds()
     end)
   end
 
@@ -144,4 +203,81 @@ function UI.CreateWindow(opts)
 
   if not opts.shown then f:Hide() end
   return f
+end
+
+---------------------------------------------------------------------------
+-- UI.RegisterSettingsCategory: an entry under Options > AddOns
+--
+-- Suite addons keep their settings in their own window (CreateWindow +
+-- CreateFormLayout). This registers a small canvas page in Blizzard's
+-- Options > AddOns list so the addon is found where players look first:
+-- the name in the brand colour, the version, a description and a button
+-- that closes the options panel and opens the addon's window. Returns the
+-- Settings category (category:GetID() for Settings.OpenToCategory) and
+-- the canvas frame.
+--
+--   CobySuite.UI.RegisterSettingsCategory({
+--     name        = "Public Order Whisper",   -- list entry and page title
+--     brandColor  = "00CED1",                  -- optional hex
+--     version     = "1.0.0",                   -- optional
+--     description = { "para", "para" },        -- string or list of paragraphs
+--     buttonText  = "Open Settings",           -- default
+--     slash       = "/pow settings",           -- optional hint beside the button
+--     onOpen      = function() Config.ToggleSettings() end,
+--   })
+---------------------------------------------------------------------------
+function UI.RegisterSettingsCategory(opts)
+  assert(opts and opts.name and opts.onOpen, "RegisterSettingsCategory needs name and onOpen")
+  local canvas = CreateFrame("Frame")
+  canvas:Hide()   -- the options panel shows and sizes it
+
+  local title = canvas:CreateFontString(nil, "OVERLAY", U.Fonts.TITLE)
+  title:SetPoint("TOPLEFT", 16, -16)
+  title:SetText(opts.brandColor and U.WrapColor(opts.brandColor, opts.name) or opts.name)
+  local last = title
+
+  local gray = U.Colors.LABEL_GRAY
+  if opts.version then
+    local version = canvas:CreateFontString(nil, "OVERLAY", U.Fonts.DATA)
+    version:SetPoint("LEFT", title, "RIGHT", 8, 0)
+    version:SetText("v" .. opts.version)
+    version:SetTextColor(gray[1], gray[2], gray[3])
+  end
+
+  local description = opts.description
+  if type(description) == "table" then description = table.concat(description, "\n\n") end
+  if description then
+    local body = canvas:CreateFontString(nil, "OVERLAY", U.Fonts.BODY)
+    body:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -12)
+    body:SetPoint("RIGHT", canvas, "RIGHT", -16, 0)
+    body:SetJustifyH("LEFT")
+    body:SetJustifyV("TOP")
+    body:SetSpacing(2)
+    body:SetText(description)
+    last = body
+  end
+
+  local button = UI.CreateButton(canvas, {
+    size  = { 140, 24 },
+    text  = opts.buttonText or "Open Settings",
+    point = { "TOPLEFT", last, "BOTTOMLEFT", 0, -16 },
+    onClick = function()
+      if SettingsPanel and SettingsPanel:IsShown() then
+        SettingsPanel:Close()
+      end
+      opts.onOpen()
+    end,
+  })
+
+  if opts.slash then
+    local hint = canvas:CreateFontString(nil, "OVERLAY", U.Fonts.DATA)
+    hint:SetPoint("LEFT", button, "RIGHT", 10, 0)
+    hint:SetText("or type " .. opts.slash)
+    hint:SetTextColor(gray[1], gray[2], gray[3])
+  end
+
+  local category = Settings.RegisterCanvasLayoutCategory(canvas, opts.name)
+  Settings.RegisterAddOnCategory(category)
+  canvas.Category = category
+  return category, canvas
 end

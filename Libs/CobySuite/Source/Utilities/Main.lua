@@ -2,8 +2,8 @@
 -- CobySuite Shared Utilities: Constants + Utility Functions
 -- All consumer addons import from here via CobySuite.Utilities
 ---------------------------------------------------------------------------
-CobySuite.Utilities = CobySuite.Utilities or {}
-local U = CobySuite.Utilities
+CobySuite_CobysCurrencySearcher.Utilities = CobySuite_CobysCurrencySearcher.Utilities or {}
+local U = CobySuite_CobysCurrencySearcher.Utilities
 
 ---------------------------------------------------------------------------
 -- Auction House
@@ -13,6 +13,20 @@ U.AH_CUT = 0.05
 function U.NetProfit(marketValue, buyPrice)
   if not marketValue or marketValue <= 0 then return 0 end
   return math.floor(marketValue * (1 - U.AH_CUT)) - buyPrice
+end
+
+---------------------------------------------------------------------------
+-- Numbers
+---------------------------------------------------------------------------
+
+-- Whether value is a number that is neither NaN nor infinite. The client's
+-- Lua cannot tell NaN by comparing it: in 12.1, 0/0 == 0/0, 0/0 < math.huge
+-- and 0/0 > -math.huge are all true, so value ~= value never catches it and
+-- a range check lets it through. Printing compares nothing: a finite number
+-- prints as digits, a point, a sign and an exponent, while NaN and the
+-- infinities print letters or "#" ("-nan(ind)", "inf", "1.#INF").
+function U.IsFiniteNumber(value)
+  return type(value) == "number" and not string.find(tostring(value), "[^%d%.eE%+%-]")
 end
 
 ---------------------------------------------------------------------------
@@ -59,7 +73,7 @@ U.EditBoxHeight = {
 }
 
 ---------------------------------------------------------------------------
--- Colors — shared semantic palette
+-- Colors: shared semantic palette
 ---------------------------------------------------------------------------
 U.Colors = {
   WARNING_RED      = { 1, 0.3, 0.3 },
@@ -86,6 +100,15 @@ U.Colors = {
   TEXT_RED    = "FF0000",
   TEXT_YELLOW = "FFFF00",
   TEXT_ORANGE = "FF8800",
+  TEXT_GOLD   = "FFD100",   -- the client's normal gold (NORMAL_FONT_COLOR)
+
+  -- Slash command help and guide "Try it" lines (U.FormatCommandLine), so the
+  -- command stands out from its description
+  HELP_HEADING  = "FFD100",   -- the addon's name
+  HELP_SECTION  = "66CCFF",   -- a group of commands
+  HELP_COMMAND  = "00FF00",   -- what the player types as it is
+  HELP_ARGUMENT = "99CC99",   -- what the player fills in: <text>, [option]
+  HELP_TEXT     = "BBBBBB",   -- the description
 }
 
 ---------------------------------------------------------------------------
@@ -122,6 +145,28 @@ U.Backdrops = {
 ---------------------------------------------------------------------------
 function U.WrapColor(hexColor, text)
   return "|cFF" .. hexColor .. text .. "|r"
+end
+
+-- A command and what it does in the help colours, as slash help and guide
+-- windows show them: "/lp set <key> <value> - Change a setting". What the
+-- player types as it is is HELP_COMMAND: everything before the first < or [
+-- that follows a space, so a line that starts with a bracket ("[hearth")
+-- stays literal. The rest of the usage is HELP_ARGUMENT and the description
+-- HELP_TEXT; with no text, the command alone.
+function U.FormatCommandLine(usage, text)
+  local C = U.Colors
+  local literal, args = usage:match("^(.-)%s+([<%[].*)$")
+  if not literal then
+    literal, args = usage, ""
+  end
+  local line = literal ~= "" and U.WrapColor(C.HELP_COMMAND, literal) or ""
+  if args ~= "" then
+    line = line .. (line ~= "" and " " or "") .. U.WrapColor(C.HELP_ARGUMENT, args)
+  end
+  if text and text ~= "" then
+    line = line .. U.WrapColor(C.HELP_TEXT, " - " .. text)
+  end
+  return line
 end
 
 ---------------------------------------------------------------------------
@@ -235,7 +280,7 @@ function U.ItemKeyString(itemKey)
 end
 
 ---------------------------------------------------------------------------
--- FormatKB — format kilobytes as "123.4 KB" or "1.23 MB"
+-- FormatKB: format kilobytes as "123.4 KB" or "1.23 MB"
 ---------------------------------------------------------------------------
 function U.FormatKB(kb)
   if kb >= 1024 then
@@ -245,7 +290,7 @@ function U.FormatKB(kb)
 end
 
 ---------------------------------------------------------------------------
--- FormatDuration — format seconds as "Xh Ym Zs", omitting zero parts
+-- FormatDuration: format seconds as "Xh Ym Zs", omitting zero parts
 ---------------------------------------------------------------------------
 function U.FormatDuration(seconds)
   seconds = math.floor(seconds)
@@ -330,11 +375,106 @@ function U.Coalesce(delay, fn)
 end
 
 ---------------------------------------------------------------------------
+-- Throttle: an OnUpdate handler that runs every `interval` seconds
+--
+--   local onUpdate, runSoon = U.Throttle(0.5, function(frame, elapsed) ... end)
+--   frame:SetScript("OnUpdate", onUpdate)
+--   frame:SetScript("OnShow", runSoon)   -- the next frame runs fn at once
+--
+-- fn(frame, elapsed) runs at most once per interval while the frame is
+-- shown, with the time gathered since its last run; the excess over the
+-- interval is dropped. The time is kept per frame, so one handler can serve
+-- several frames. runSoon(frame) makes that frame's next OnUpdate run fn.
+---------------------------------------------------------------------------
+function U.Throttle(interval, fn)
+  local gathered = setmetatable({}, { __mode = "k" })
+
+  local function OnUpdate(frame, elapsed)
+    local total = (gathered[frame] or 0) + (elapsed or 0)
+    if total < interval then
+      gathered[frame] = total
+      return
+    end
+    gathered[frame] = 0
+    fn(frame, total)
+  end
+
+  local function RunSoon(frame)
+    gathered[frame] = interval
+  end
+
+  return OnUpdate, RunSoon
+end
+
+---------------------------------------------------------------------------
 -- Secure command detection
 ---------------------------------------------------------------------------
+-- The whole slash token, up to the first space, goes to IsSecureCmd, which
+-- upper-cases it and knows every alias the client has. A capture of ASCII
+-- letters only missed localized commands and cut names at punctuation.
 function U.IsSecureCommand(text)
-  if not text then return false end
-  local cmd = text:match("^(/[%a]+)")
+  if type(text) ~= "string" then return false end
+  local cmd = text:match("^(/%S+)")
   if not cmd then return false end
-  return IsSecureCmd and IsSecureCmd(cmd) or false
+  return (IsSecureCmd and IsSecureCmd(cmd)) and true or false
+end
+
+---------------------------------------------------------------------------
+-- String helpers
+---------------------------------------------------------------------------
+-- Escape a literal string for use inside a Lua pattern.
+function U.EscapePattern(text)
+  return (text:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
+end
+
+-- A Lua pattern that matches `text` case-insensitively against a stored name:
+-- each ASCII letter becomes a two-letter class ("s" -> "[sS]"), digits stay as
+-- they are, and every other byte is escaped, so query text can never be read
+-- as pattern syntax. Built once per query; matching then allocates nothing.
+-- ASCII only: other bytes match exactly.
+--   local pattern = U.CasePattern(query)
+--   if name:find(pattern) then ... end
+function U.CasePattern(text)
+  return (string.gsub(text, ".", function(ch)
+    local b = strbyte(ch)
+    if b >= 97 and b <= 122 then           -- a-z
+      return "[" .. ch .. string.char(b - 32) .. "]"
+    elseif b >= 65 and b <= 90 then        -- A-Z
+      return "[" .. string.char(b + 32) .. ch .. "]"
+    elseif b >= 48 and b <= 57 then        -- 0-9
+      return ch
+    end
+    return "%" .. ch                       -- literal for any other byte
+  end))
+end
+
+-- Replace {key} placeholders in a template with values[key]. Keys are
+-- matched lower-case; a placeholder with no value stays as typed. The
+-- function replacement keeps hyperlink escape codes in the values out of
+-- pattern interpretation.
+--   U.ExpandPlaceholders("I can craft {item} for {name}", { item = link, name = "Bob" })
+function U.ExpandPlaceholders(template, values)
+  return (template:gsub("{(%a+)}", function(key)
+    local value = values[key:lower()]
+    if value == nil then return nil end
+    return tostring(value)
+  end))
+end
+
+-- Plain-text money for chat messages, where texture icons do not render:
+-- "150g 25s", "25s", "40c". Gold values drop the copper.
+function U.FormatMoneyText(copper)
+  copper = math.floor(tonumber(copper) or 0)
+  local gold = math.floor(copper / 10000)
+  local silver = math.floor((copper % 10000) / 100)
+  local cents = copper % 100
+  if gold > 0 then
+    if silver > 0 then return ("%dg %ds"):format(gold, silver) end
+    return ("%dg"):format(gold)
+  end
+  if silver > 0 then
+    if cents > 0 then return ("%ds %dc"):format(silver, cents) end
+    return ("%ds"):format(silver)
+  end
+  return ("%dc"):format(cents)
 end

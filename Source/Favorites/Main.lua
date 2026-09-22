@@ -16,7 +16,7 @@ CobysCurrencySearcher.Favorites = Favorites
 -- before any result row can exist; the guard only keeps a stray early call
 -- safe.
 local function Store()
-  if COBYS_CURRENCY_SEARCHER_FAVORITES == nil then
+  if type(COBYS_CURRENCY_SEARCHER_FAVORITES) ~= "table" then
     COBYS_CURRENCY_SEARCHER_FAVORITES = {}
   end
   return COBYS_CURRENCY_SEARCHER_FAVORITES

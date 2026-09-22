@@ -40,22 +40,28 @@
 --     characters of a Warband). A filter narrows the results with or
 --     without search text; headers then stay only for the rows they still
 --     contain. Filters last for the session and, like the text, are
---     cleared by a result click.
+--     cleared by the popup's Transfer button and put back once the
+--     transfer menu is open.
 --   * Every currency row, in Blizzard's list and in the results, carries a
---     star at its right edge (filled for favorites, empty for the rest)
+--     star at its left edge (filled for favorites, empty for the rest)
 --     that marks the currency as a favorite, saved account-wide. The
 --     Favorites filter shows only starred currencies, in their usual order.
 --     The star is a child button attached by a hooksecurefunc post-hook on
 --     TokenEntryMixin:Initialize, kept in our own table; a Blizzard row is
 --     only read, never written to (see "Favorite star").
 --   * Clicking a result opens our own options popup (a replica of
---     TokenFramePopup) and the results stay. Unused and Show on Backpack
---     work from it directly (unprotected calls). Its Transfer button is the
---     one action that has to reach Blizzard's own UI: it stashes the
---     search, runs a secure macro that flips the character window away and
---     back (a clean rebuild), /clicks the target's row through a delegate
---     and then /clicks Blizzard's transfer toggle through a second delegate,
---     so Blizzard's popup and the transfer menu open for that currency; see
+--     TokenFramePopup) and the results stay. Unused works from it directly
+--     (an unprotected call). Show on Backpack, from the popup or from the
+--     modified click on a result, sets the currency and then runs a secure
+--     macro that flips the character window away and back, so Blizzard
+--     rebuilds its own list with the new state while the search stays; see
+--     "Secure backpack hand-off" below (in combat, the check on Blizzard's
+--     row is mirrored instead). Its Transfer button is the other action
+--     that has to reach Blizzard's own UI: it stashes the search, runs a
+--     secure macro that flips the character window away and back (a clean
+--     rebuild), /clicks the target's row through a delegate and then
+--     /clicks Blizzard's transfer toggle through a second delegate, so
+--     Blizzard's popup and the transfer menu open for that currency; see
 --     "Secure transfer hand-off" below. The search and filters come straight
 --     back in the same click, with the transfer menu open beside the window.
 --
@@ -70,8 +76,8 @@ local Debug = CobysCurrencySearcher.Debug
 local Config = CobysCurrencySearcher.Config
 local Utilities = CobysCurrencySearcher.Utilities
 local Favorites = CobysCurrencySearcher.Favorites
-local U = CobySuite.Utilities
-local UI = CobySuite.UI
+local U = CobySuite_CobysCurrencySearcher.Utilities
+local UI = CobySuite_CobysCurrencySearcher.UI
 
 local Search = {}
 CobysCurrencySearcher.Search = Search
@@ -85,11 +91,10 @@ local MAX_LETTERS = 50
 
 -- The funnel and its menu come from CobySuite.UI.CreateFilterButton (the
 -- objective tracker's 18x19 funnel, MenuStyle1 menu). The settings gear
--- beside it is CobySuite.UI.CreateFilterStyleButton: the funnel's own badge
--- with the raid manager's settings glyph (GM-icon-settings,
--- Blizzard_CompactRaidFrameManager.xml) drawn over it in the funnel's gold.
-local SETTINGS_GLYPH_ATLAS = "GM-icon-settings"
-local SETTINGS_GLYPH_INSET = -1   -- the glyph atlas is padded for a 40px button
+-- beside it is CobySuite.UI.CreateSettingsGearButton: the funnel's own
+-- badge with the raid manager's settings glyph drawn over it in the
+-- funnel's gold, shared by every suite addon that puts a gear on a
+-- Blizzard list.
 
 -- Favorite stars (CobySuite.UI.CreateFavoriteStar, the auction house star)
 -- sit at the left edge of every row. Blizzard's account-wide / transferable
@@ -166,6 +171,17 @@ local POPUP_HEIGHT_FULL = 135
 -- margin.
 local TRANSFER_MACRO = "/click CharacterFrameTab1\n/click CharacterFrameTab3\n/click CobysCurrencySearcherClickStep\n/click CobysCurrencySearcherTransferStep"
 
+-- Show on Backpack through the same tab switch, so Blizzard rebuilds its
+-- list with the new watch state (see "Secure backpack hand-off").
+--
+-- SECURE_BACKPACK_HANDOFF is the single switch for it. Set it to false and
+-- every Show on Backpack toggle goes back to the mirrored check on
+-- Blizzard's row (the path combat uses): no clicker is built over the
+-- popup's checkbox or over the results, and a modified click on a result
+-- is handled by OnEntryClick as before.
+local SECURE_BACKPACK_HANDOFF = true
+local BACKPACK_MACRO = "/click CharacterFrameTab1\n/click CharacterFrameTab3"
+
 local searchBox
 local emptyLabel
 local query = ""           -- normalized active query; "" when no search text is active
@@ -191,8 +207,13 @@ local blizzardListStale = false  -- our popup reordered the underlying list; see
 
 local clickStep            -- CobysCurrencySearcherClickStep, the /click delegate for the row; created once
 local transferStep         -- CobysCurrencySearcherTransferStep, the /click delegate for Blizzard's transfer toggle; created once
-local macroInFlight = false  -- true from the Transfer button's PreClick to its PostClick
-local macroTarget          -- { currencyID, name, path, ancestors } for the hand-off in flight
+local macroInFlight = false  -- true from a secure clicker's PreClick to its PostClick (Transfer or Show on Backpack)
+local macroMode = "transfer" -- which hand-off is in flight: "transfer" or "backpack"
+local macroTarget          -- { currencyID, name, path, ancestors } for the transfer hand-off in flight
+local backpackHandoff      -- { currencyID, popupCurrencyID, rebuilt } for the backpack hand-off in flight
+local watchClicker         -- the secure clicker over the hovered result row while the watch modifier is held
+local hoveredResultRow     -- result row under the mouse, for watchClicker
+local seams                -- test seams (Search._test.seams); filled in beside SetWatched
 local stashedSearch        -- { text, filters } to bring back once the transfer menu is open
 local refreshQuantities    -- Coalesce handle for CURRENCY_DISPLAY_UPDATE refreshes (see OnCurrencyDisplayUpdate)
 local lastCollapsedKeys    -- header path keys that were collapsed at the last snapshot
@@ -596,6 +617,7 @@ local function ShowEntryTooltip(self)
 end
 
 local ShowPopupFor, TogglePopupFor, SetWatched   -- forward declarations
+local UpdateWatchClicker                         -- defined under "Secure backpack hand-off"
 
 -- Selection highlight on every result row, without a new snapshot.
 local function RefreshRowHighlights()
@@ -639,9 +661,11 @@ end
 -- TokenEntryMixin:Initialize (InstallStarHook). The star is kept in `stars`,
 -- keyed by the row, never as a field on the row: a Blizzard row is only
 -- read (elementData) and given a child, so its data stays clean for the
--- warband transfer path. The only other thing done to a row is moving its
--- backpack check texture onto the currency icon (widget calls, no Lua
--- writes) so the star can have the right-hand slot.
+-- warband transfer path. The only other things done to a row are widget
+-- calls with no Lua writes: its account-wide icon is re-anchored right of
+-- the star (the star takes that left-hand slot), and its backpack check,
+-- which keeps its own slot, has its shown state mirrored from
+-- watchedOverrides (see SetWatched).
 -------------------------------------------------------------------------------
 -- The star reads the row's current elementData on every refresh, so a
 -- pooled row stays right as Blizzard reuses it for another currency. The
@@ -759,16 +783,26 @@ local function RefreshBlizzardStars()
   end)
 end
 
+-- Result rows also track the hovered row, which the watch clicker covers
+-- while the backpack modifier is held.
 local function OnEntryEnter(self)
   if not EntryIsSelected(self) then
     ShowEntryTooltip(self)
   end
   self:RefreshHighlightVisuals()
+  hoveredResultRow = self
+  UpdateWatchClicker()
 end
 
 local function OnEntryLeave(self)
   GameTooltip_Hide()
   self:RefreshHighlightVisuals()
+  -- Covering the row with the watch clicker fires this too; the row still
+  -- counts as hovered while the cursor is over it
+  if hoveredResultRow == self and not self:IsMouseOver() then
+    hoveredResultRow = nil
+  end
+  UpdateWatchClicker()
 end
 
 local function ToggleResultsHeader(data)
@@ -791,6 +825,9 @@ local function OnSubHeaderToggleClick(toggle)
 end
 
 local OnTransferPreClick, OnTransferPostClick   -- defined under "Secure transfer hand-off"
+local OnBackpackPreClick, OnBackpackPostClick   -- defined under "Secure backpack hand-off"
+local OnWatchPreClick, OnWatchPostClick
+local IsBackpackDetour
 
 -- Initializers. The first acquisition of a pooled frame swaps the template's
 -- TokenFrame-bound scripts for ours; every acquisition then runs Blizzard's
@@ -845,6 +882,60 @@ refreshQuantities = U.Coalesce(DEBOUNCE_SECONDS, function()
   end
 end)
 
+-- The attributes every secure clicker here shares (the Transfer clicker's
+-- configuration, verified in game): the macro runs once, on release,
+-- whatever the ActionButtonUseKeyDown CVar says. blockModified makes
+-- shift, ctrl and alt clicks run nothing.
+local function SetMacroClickerAttributes(clicker, macrotext, blockModified)
+  clicker:RegisterForClicks("LeftButtonUp")
+  clicker:SetAttribute("useOnKeyDown", false)
+  clicker:SetAttribute("type", "macro")
+  clicker:SetAttribute("macrotext", macrotext)
+  if blockModified then
+    clicker:SetAttribute("shift-type*", "")
+    clicker:SetAttribute("ctrl-type*", "")
+    clicker:SetAttribute("alt-type*", "")
+  end
+end
+
+-- The watch clicker: one insecure action button, shown over the hovered
+-- result row (from the star's right edge to the row's end) only while the
+-- backpack modifier is held, out of combat. Its modified click is the one
+-- that runs the macro, so modifiers are not blocked. It hands the mouse
+-- over to the row underneath for the tooltip and the highlight.
+local function CreateWatchClicker(parent)
+  local clicker = CreateFrame("Button", nil, parent, "InsecureActionButtonTemplate")
+  clicker:Hide()
+  SetMacroClickerAttributes(clicker, BACKPACK_MACRO, false)
+  clicker:SetScript("PreClick", OnWatchPreClick)
+  clicker:SetScript("PostClick", OnWatchPostClick)
+  clicker:SetScript("OnEnter", function(self)
+    if self.row then OnEntryEnter(self.row) end
+  end)
+  clicker:SetScript("OnLeave", function(self)
+    -- The row got its own OnLeave when the clicker covered it, with the
+    -- cursor still over it, so its hover (and a hover-mode star) ends here.
+    -- Captured first: OnEntryLeave can clear self.row.
+    local row = self.row
+    if row then
+      OnEntryLeave(row)
+      OnRowLeave(row)
+    end
+  end)
+  -- A scroll or a rebuild can move another currency under the cursor
+  clicker:SetScript("OnUpdate", function(self)
+    local row = self.row
+    local data = row and row.elementData
+    if not (row and data and not data.isHeader and row:IsVisible() and row:IsMouseOver()) then
+      if row and hoveredResultRow == row and not row:IsMouseOver() then
+        hoveredResultRow = nil
+      end
+      UpdateWatchClicker()
+    end
+  end)
+  return clicker
+end
+
 local function BuildOverlay()
   local blizzBox = TokenFrame.ScrollBox
   local blizzBar = TokenFrame.ScrollBar
@@ -859,12 +950,39 @@ local function BuildOverlay()
   overlay:SetFrameLevel(blizzBox:GetFrameLevel() + 20)
   overlay:EnableMouse(true)   -- swallow clicks so the faded list below gets none
   overlay:Hide()
-  overlay:SetScript("OnShow", function(self) self:RegisterEvent("CURRENCY_DISPLAY_UPDATE") end)
+  overlay:SetScript("OnShow", function(self)
+    self:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+    if SECURE_BACKPACK_HANDOFF then
+      -- The watch clicker follows the modifier, leaves at combat start and
+      -- comes back at its end (a modifier held through the end of a fight
+      -- fires no other event)
+      self:RegisterEvent("MODIFIER_STATE_CHANGED")
+      self:RegisterEvent("PLAYER_REGEN_DISABLED")
+      self:RegisterEvent("PLAYER_REGEN_ENABLED")
+    end
+  end)
   overlay:SetScript("OnHide", function(self)
     self:UnregisterEvent("CURRENCY_DISPLAY_UPDATE")
+    self:UnregisterEvent("MODIFIER_STATE_CHANGED")
+    self:UnregisterEvent("PLAYER_REGEN_DISABLED")
+    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
     refreshQuantities:Cancel()
+    -- A backpack hand-off's own tab switch hides the overlay mid-click; its
+    -- PostClick puts the watch clicker right afterwards
+    if not IsBackpackDetour() then
+      hoveredResultRow = nil
+      UpdateWatchClicker(true)
+    end
   end)
-  overlay:SetScript("OnEvent", OnCurrencyDisplayUpdate)
+  overlay:SetScript("OnEvent", function(self, event, ...)
+    if event == "CURRENCY_DISPLAY_UPDATE" then
+      OnCurrencyDisplayUpdate(self, event, ...)
+    elseif event == "PLAYER_REGEN_DISABLED" then
+      UpdateWatchClicker(true)
+    else
+      UpdateWatchClicker()
+    end
+  end)
 
   resultsBox = CreateFrame("Frame", nil, overlay, "WowScrollBoxList")
   resultsBox:SetAllPoints(blizzBox)
@@ -901,6 +1019,10 @@ local function BuildOverlay()
   end)
   view:SetPadding(LIST_PADDING, LIST_PADDING, LIST_PADDING, LIST_PADDING, LIST_SPACING)
   ScrollUtil.InitScrollBoxListWithScrollBar(resultsBox, resultsBar, view)
+
+  if SECURE_BACKPACK_HANDOFF then
+    watchClicker = CreateWatchClicker(overlay)
+  end
 
   local label = overlay:CreateFontString(nil, "OVERLAY", U.Fonts.BODY)
   label:SetPoint("CENTER", resultsBox, "CENTER", 0, 0)
@@ -939,10 +1061,11 @@ end
 -------------------------------------------------------------------------------
 -- Options popup (replica of TokenFramePopup)
 --
--- Unused and Show on Backpack work from here. Transfer cannot start here:
--- its button runs the secure hand-off to Blizzard's clean list, the only
--- place a transfer can start (see the file header and "Secure transfer
--- hand-off").
+-- Unused works from here directly. Show on Backpack sets the currency here
+-- and then lets Blizzard rebuild its list through the secure tab switch
+-- (see "Secure backpack hand-off"). Transfer cannot start here: its button
+-- runs the secure hand-off to Blizzard's clean list, the only place a
+-- transfer can start (see the file header and "Secure transfer hand-off").
 -------------------------------------------------------------------------------
 local TRANSFER_DISABLED_MESSAGES   -- built on first use (mirrors Blizzard_CurrencyTransfer.lua)
 
@@ -1048,25 +1171,51 @@ local function NumWatchedTokens(maxWatched)
   return n
 end
 
+-- Test seams (Search._test.seams): every call the Show on Backpack paths
+-- make that reaches the game or Blizzard's frames, read at call time so the
+-- SearchSuite can stand in for them (MockHarness OverrideField) without
+-- changing a real currency, showing an error or running the macro's
+-- effects. Production code always goes through them.
+seams = {
+  InCombat = function() return InCombatLockdown() end,
+  IsModifiedClick = function(action) return IsModifiedClick(action) end,
+  -- maxWatched, numWatched
+  WatchCapacity = function()
+    local maxWatched = MaxWatchedTokens()
+    return maxWatched, NumWatchedTokens(maxWatched)
+  end,
+  SetCurrencyBackpack = function(currencyID, watched) C_CurrencyInfo.SetCurrencyBackpackByID(currencyID, watched) end,
+  ShowError = function(text) UIErrorsFrame:AddMessage(text, 1.0, 0.1, 0.1, 1.0) end,
+  PlaySound = function(kit) PlaySound(kit) end,
+  Refresh = function() Refresh() end,
+  ShowOverlay = function() ShowOverlay() end,
+  ArmClickStep = function(row) if clickStep then clickStep:SetAttribute("clickbutton", row) end end,
+  ArmTransferStep = function(button) if transferStep then transferStep:SetAttribute("clickbutton", button) end end,
+}
+
 -- Show on Backpack. By currency id, so no list index is needed and Blizzard's
 -- hidden list stays consistent (row order does not change). The backpack bar
 -- refreshes itself from the game's currency events; we never call its Update
 -- from addon code because the bag frames read its state on protected paths.
 SetWatched = function(data, watched)
   if watched then
-    local maxWatched = MaxWatchedTokens()
-    if NumWatchedTokens(maxWatched) >= maxWatched then
-      UIErrorsFrame:AddMessage(TOO_MANY_WATCHED_TOKENS:format(maxWatched), 1.0, 0.1, 0.1, 1.0)
+    local maxWatched, numWatched = seams.WatchCapacity()
+    if numWatched >= maxWatched then
+      seams.ShowError(TOO_MANY_WATCHED_TOKENS:format(maxWatched))
       return false
     end
   end
-  C_CurrencyInfo.SetCurrencyBackpackByID(data.currencyID, watched)
+  seams.SetCurrencyBackpack(data.currencyID, watched)
   -- Blizzard's hidden rows keep the old check until their next rebuild, and
   -- a rebuild from addon code would taint them for transfers (see the
-  -- file header), so the check texture is overridden instead: a widget call,
+  -- file header), so the check texture is mirrored meanwhile: a widget call,
   -- no Lua write, applied by the row hook and dropped at the next rebuild.
-  -- Their elementData stays stale until then, so the first modified click
-  -- on that row in Blizzard's list toggles against the old value.
+  -- Out of combat the secure backpack hand-off makes that rebuild at once
+  -- (Blizzard's own, from a tab switch), so Blizzard's rows and their click
+  -- data agree right away. In combat, or with the hand-off switched off,
+  -- their elementData stays stale until the next rebuild: the first
+  -- modified click on that row in Blizzard's list toggles against the old
+  -- value, and at the watch cap it repeats the "too many" error until then.
   watchedOverrides[data.currencyID] = watched
   Debug.Log("SEARCH", "%s %s on backpack", watched and "Showing" or "Hiding", data.name or "?")
   return true
@@ -1109,6 +1258,28 @@ local function OnBackpackClick(checkbox)
   end
   PlaySound(watched and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
   Refresh()
+end
+
+-- The popup is a child of TokenFrame, so a backpack hand-off's tab switch
+-- hides and shows it with the tab. That detour plays no sound and keeps the
+-- selected currency, so the popup is back as it was.
+local function OnPopupShown(f)
+  if not IsBackpackDetour() then
+    seams.PlaySound(SOUNDKIT.IG_CHARACTER_INFO_OPEN)
+  end
+  f:RegisterEvent("ACCOUNT_CHARACTER_CURRENCY_DATA_RECEIVED")
+  f:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+  f:RegisterEvent("CURRENCY_TRANSFER_INITIATED")
+  f:RegisterEvent("CURRENCY_TRANSFER_SUCCESS")
+  f:RegisterEvent("CURRENCY_TRANSFER_FAILED")
+end
+
+local function OnPopupHidden(f)
+  f:UnregisterAllEvents()
+  if IsBackpackDetour() then return end
+  seams.PlaySound(SOUNDKIT.IG_CHARACTER_INFO_CLOSE)
+  selectedCurrencyID = nil
+  RefreshRowHighlights()
 end
 
 local function BuildPopup()
@@ -1172,54 +1343,62 @@ local function BuildPopup()
   transfer:HookScript("OnLeave", GameTooltip_Hide)
   f.TransferButton = transfer
 
+  -- Mouse events on a clicker go on to the widget it covers, so that widget
+  -- still presses, highlights and shows its tooltip.
+  local function Forward(target, script)
+    return function(_, ...)
+      local handler = target:GetScript(script)
+      if handler then handler(target, ...) end
+    end
+  end
+
   -- Full-size insecure action button over Transfer. Its OnClick is
   -- Blizzard's secure action handler, so TRANSFER_MACRO runs on a secure
-  -- path (see "Secure transfer hand-off"). Mouse events are forwarded so
-  -- the button underneath still presses, highlights and shows its tooltip.
+  -- path (see "Secure transfer hand-off"). Modified clicks never run it.
   local clicker = CreateFrame("Button", nil, transfer, "InsecureActionButtonTemplate")
   clicker:SetAllPoints()
   clicker:SetFrameLevel(transfer:GetFrameLevel() + 5)
-  clicker:RegisterForClicks("LeftButtonUp")
-  clicker:SetAttribute("useOnKeyDown", false)
-  clicker:SetAttribute("type", "macro")
-  clicker:SetAttribute("macrotext", TRANSFER_MACRO)
-  -- Modified clicks never run the macro.
-  clicker:SetAttribute("shift-type*", "")
-  clicker:SetAttribute("ctrl-type*", "")
-  clicker:SetAttribute("alt-type*", "")
+  SetMacroClickerAttributes(clicker, TRANSFER_MACRO, true)
   clicker:SetScript("PreClick", OnTransferPreClick)
   clicker:SetScript("PostClick", OnTransferPostClick)
-  local function Forward(script)
-    return function(_, ...)
-      local handler = transfer:GetScript(script)
-      if handler then handler(transfer, ...) end
-    end
-  end
-  clicker:SetScript("OnEnter", Forward("OnEnter"))
-  clicker:SetScript("OnLeave", Forward("OnLeave"))
-  clicker:SetScript("OnMouseDown", Forward("OnMouseDown"))
-  clicker:SetScript("OnMouseUp", Forward("OnMouseUp"))
+  clicker:SetScript("OnEnter", Forward(transfer, "OnEnter"))
+  clicker:SetScript("OnLeave", Forward(transfer, "OnLeave"))
+  clicker:SetScript("OnMouseDown", Forward(transfer, "OnMouseDown"))
+  clicker:SetScript("OnMouseUp", Forward(transfer, "OnMouseUp"))
   transfer.clicker = clicker
+
+  -- The same kind of clicker over Show on Backpack runs BACKPACK_MACRO (see
+  -- "Secure backpack hand-off"); the checkbox's own OnClick is then only
+  -- reached with the hand-off switched off. The checkbox is ticked by
+  -- PreClick, since the click never reaches it.
+  if SECURE_BACKPACK_HANDOFF then
+    local backpackClicker = CreateFrame("Button", nil, backpack, "InsecureActionButtonTemplate")
+    backpackClicker:SetAllPoints()
+    backpackClicker:SetFrameLevel(backpack:GetFrameLevel() + 5)
+    SetMacroClickerAttributes(backpackClicker, BACKPACK_MACRO, true)
+    backpackClicker:SetScript("PreClick", OnBackpackPreClick)
+    backpackClicker:SetScript("PostClick", OnBackpackPostClick)
+    local enter, leave = Forward(backpack, "OnEnter"), Forward(backpack, "OnLeave")
+    backpackClicker:SetScript("OnEnter", function(self, ...)
+      backpack:LockHighlight()
+      enter(self, ...)
+    end)
+    backpackClicker:SetScript("OnLeave", function(self, ...)
+      backpack:UnlockHighlight()
+      leave(self, ...)
+    end)
+    backpackClicker:SetScript("OnMouseDown", Forward(backpack, "OnMouseDown"))
+    backpackClicker:SetScript("OnMouseUp", Forward(backpack, "OnMouseUp"))
+    backpack.clicker = backpackClicker
+  end
 
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", -2, -2)
   close:SetScript("OnClick", function() f:Hide() end)
   f.CloseButton = close
 
-  f:SetScript("OnShow", function()
-    PlaySound(SOUNDKIT.IG_CHARACTER_INFO_OPEN)
-    f:RegisterEvent("ACCOUNT_CHARACTER_CURRENCY_DATA_RECEIVED")
-    f:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
-    f:RegisterEvent("CURRENCY_TRANSFER_INITIATED")
-    f:RegisterEvent("CURRENCY_TRANSFER_SUCCESS")
-    f:RegisterEvent("CURRENCY_TRANSFER_FAILED")
-  end)
-  f:SetScript("OnHide", function()
-    PlaySound(SOUNDKIT.IG_CHARACTER_INFO_CLOSE)
-    f:UnregisterAllEvents()
-    selectedCurrencyID = nil
-    RefreshRowHighlights()
-  end)
+  f:SetScript("OnShow", OnPopupShown)
+  f:SetScript("OnHide", OnPopupHidden)
   f:SetScript("OnEvent", function()
     local data = FindResult(selectedCurrencyID)
     if data then RefreshTransferButton(data); f:SetHeight(PopupBestHeight()) end
@@ -1361,15 +1540,11 @@ end
 -- menu only from TokenFrame:Update, which the overlay never calls.
 -------------------------------------------------------------------------------
 local function ArmClickStep(row)
-  if clickStep then
-    clickStep:SetAttribute("clickbutton", row)
-  end
+  seams.ArmClickStep(row)
 end
 
 local function ArmTransferStep(button)
-  if transferStep then
-    transferStep:SetAttribute("clickbutton", button)
-  end
+  seams.ArmTransferStep(button)
 end
 
 -- Blizzard's list has the currency selected (its row was clicked).
@@ -1453,9 +1628,14 @@ end
 -- Runs before the secure action. Modified clicks and clicks in combat never
 -- reach the macro (the modifier attributes are no-ops and the insecure
 -- template refuses in combat).
-OnTransferPreClick = function()
+OnTransferPreClick = function(clicker)
   local data = FindResult(selectedCurrencyID)
-  if not data then return end
+  if not data then
+    -- No target (the results went away under an open popup): run nothing,
+    -- as the backpack clickers do. PostClick arms the macro again.
+    clicker:SetAttribute("type", "")
+    return
+  end
   if IsShiftKeyDown() or IsControlKeyDown() or IsAltKeyDown() then
     return   -- modified click; the macro is a no-op for it too
   end
@@ -1470,6 +1650,7 @@ OnTransferPreClick = function()
     path = data.path,
     ancestors = data.ancestors or {},
   }
+  macroMode = "transfer"
   macroInFlight = true
   -- Remember the collapse state from before the first hand-off so the tab's
   -- OnHide can put it back; later hand-offs keep the earliest record.
@@ -1488,8 +1669,9 @@ OnTransferPreClick = function()
   Debug.State("SEARCH", "Transfer: selecting %s in Blizzard's list", data.name or "?")
 end
 
-OnTransferPostClick = function()
-  if not macroInFlight then return end
+OnTransferPostClick = function(clicker)
+  clicker:SetAttribute("type", "macro")
+  if not macroInFlight or macroMode ~= "transfer" then return end
   macroInFlight = false
   ArmClickStep(nil)
   ArmTransferStep(nil)
@@ -1520,14 +1702,18 @@ OnTransferPostClick = function()
 end
 
 -- Post-hook on TokenFrame:Update(). Blizzard has just rebuilt its list from
--- fresh data. During a hand-off, aim the row delegate at the target's row,
--- then, once Blizzard's popup is open for it, aim the transfer delegate at
--- the popup's toggle; otherwise refresh our results from the same data.
--- Their frames are only ever read.
+-- fresh data. During a transfer hand-off, aim the row delegate at the
+-- target's row, then, once Blizzard's popup is open for it, aim the transfer
+-- delegate at the popup's toggle. Otherwise, a backpack hand-off's rebuild
+-- included, refresh our results from the same data. Their frames are only
+-- ever read.
 local function OnTokenFrameUpdated()
   blizzardListStale = false   -- any rebuild, theirs or ours, is fresh
   wipe(watchedOverrides)      -- the rebuilt rows carry the real backpack state
-  if macroInFlight and macroTarget then
+  if macroInFlight and macroMode == "backpack" and backpackHandoff then
+    backpackHandoff.rebuilt = true
+  end
+  if macroInFlight and macroMode == "transfer" and macroTarget then
     if PopupOpenFor(macroTarget.currencyID) then
       -- The row step has clicked the row (its OnClick runs Update): the
       -- last macro line clicks the transfer toggle.
@@ -1544,8 +1730,8 @@ local function OnTokenFrameUpdated()
     return
   end
   if not IsSearchActive() then return end
-  ShowOverlay()   -- re-assert the fade; harmless when already applied
-  Refresh()
+  seams.ShowOverlay()   -- re-assert the fade; harmless when already applied
+  seams.Refresh()
 end
 
 -- Clears the search text (unless the keep-text option is on); filters stay
@@ -1553,7 +1739,7 @@ end
 -- list at once (Blizzard's OnShow Update reaches OnTokenFrameUpdated).
 local function OnTokenFrameHidden()
   if filterButton then filterButton.Menu:Hide() end
-  if macroInFlight then return end   -- the tab detour of a transfer hand-off
+  if macroInFlight then return end   -- the tab detour of a hand-off (transfer or backpack)
   stashedSearch = nil
   if not Config.Get(Config.Options.KEEP_TEXT) then
     CancelPendingSearch()
@@ -1565,6 +1751,185 @@ local function OnTokenFrameHidden()
     end
   end
   RestoreCollapseState()
+end
+
+-------------------------------------------------------------------------------
+-- Secure backpack hand-off
+--
+-- Show on Backpack changes the game's watch list (an unprotected call), but
+-- Blizzard's hidden rows keep their old check and their old click data until
+-- Blizzard rebuilds its list, and a rebuild from addon code would taint those
+-- rows for transfers. So a toggle out of combat runs BACKPACK_MACRO from an
+-- insecure action button, the same tab switch the transfer hand-off starts
+-- with: /click CharacterFrameTab1, /click CharacterFrameTab3. TokenFrame's
+-- own OnShow rebuilds its list on the secure path with the new state, our
+-- Update post-hook refreshes the results from it (no delegate is armed in
+-- this mode), and the search, the filters, the popup and its selection stay
+-- as they were, all in the same click. Blizzard's row then agrees with the
+-- check at once, and its next modified click reverses it.
+--
+-- Two clickers run it: one over the popup's Show on Backpack checkbox, and
+-- watchClicker, over the hovered result row while the TOKENWATCHTOGGLE
+-- modifier is held (tracked with MODIFIER_STATE_CHANGED while the overlay
+-- shows). PreClick sets the currency (SetWatched, which also mirrors the
+-- check in case the rebuild does not come) and marks the hand-off in flight;
+-- a click that must not run the macro sets the clicker's type to "" for that
+-- click, and PostClick always puts "macro" back. At the watch cap SetWatched
+-- shows Blizzard's error once and nothing else happens. In combat the
+-- insecure template refuses, so PreClick keeps today's path: the mirrored
+-- check and a results refresh. Player-visible costs: the character tab
+-- sound plays twice per toggle, and an open transfer menu closes (the tab's
+-- OnHide closes it).
+--
+-- SECURE_BACKPACK_HANDOFF (top of the file) switches all of this off.
+-------------------------------------------------------------------------------
+IsBackpackDetour = function()
+  return macroInFlight and macroMode == "backpack"
+end
+
+local function PlayCheckSound(watched)
+  seams.PlaySound(watched and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
+end
+
+local function BeginBackpackHandoff(currencyID)
+  backpackHandoff = {
+    currencyID = currencyID,
+    popupCurrencyID = (popup and popup:IsShown()) and selectedCurrencyID or nil,
+    rebuilt = false,
+    -- The tab switch hides the search box, which can cost it the keyboard
+    hadFocus = searchBox ~= nil and searchBox:HasFocus(),
+  }
+  macroMode = "backpack"
+  macroInFlight = true
+  Debug.State("SEARCH", "Show on Backpack: rebuilding Blizzard's list through the tab switch")
+end
+
+-- Runs from both clickers' PostClick, after the macro
+local function FinishBackpackHandoff()
+  local handoff = backpackHandoff
+  if not (IsBackpackDetour() and handoff) then return end
+  if not handoff.rebuilt then
+    Debug.Warn("SEARCH", "Show on Backpack: the tab switch did not rebuild Blizzard's list; its row keeps the mirrored check until the next rebuild")
+  end
+  seams.Refresh()
+  -- Put the popup back for the currency it showed, if the refresh closed it
+  -- (still inside the detour, so without a sound)
+  if handoff.popupCurrencyID and popup and not popup:IsShown() then
+    local data = FindResult(handoff.popupCurrencyID)
+    if data then ShowPopupFor(data) end
+  end
+  if popup and not popup:IsShown() then
+    selectedCurrencyID = nil   -- the detour kept it for a popup that did not come back
+  end
+  macroInFlight = false
+  macroMode = "transfer"
+  backpackHandoff = nil
+  RefreshRowHighlights()
+  UpdateWatchClicker()
+  if watchClicker and watchClicker:IsShown() and watchClicker.row then
+    OnEntryEnter(watchClicker.row)   -- the tooltip again, as a plain click leaves it
+  end
+  -- Typing carries on where it was (a no-op when the box kept the keyboard)
+  if handoff.hadFocus and searchBox and searchBox:IsVisible() then
+    searchBox:SetFocus()
+  end
+end
+
+-- The popup's checkbox
+OnBackpackPreClick = function(clicker)
+  local data = FindResult(selectedCurrencyID)
+  if not data or not popup or IsShiftKeyDown() or IsControlKeyDown() or IsAltKeyDown() then
+    clicker:SetAttribute("type", "")   -- nothing to toggle, or a modified click
+    return
+  end
+  local checkbox = popup.BackpackCheckbox
+  local watched = not checkbox:GetChecked()
+  if seams.InCombat() then
+    clicker:SetAttribute("type", "")   -- the template refuses in combat anyway
+    if SetWatched(data, watched) then
+      checkbox:SetChecked(watched)
+      PlayCheckSound(watched)
+      seams.Refresh()
+    end
+    return
+  end
+  if not SetWatched(data, watched) then
+    clicker:SetAttribute("type", "")   -- at the watch cap: the error, no tab switch
+    return
+  end
+  checkbox:SetChecked(watched)
+  PlayCheckSound(watched)
+  BeginBackpackHandoff(data.currencyID)
+end
+
+OnBackpackPostClick = function(clicker)
+  clicker:SetAttribute("type", "macro")
+  FinishBackpackHandoff()
+end
+
+-- The modified click on a result row, through watchClicker
+OnWatchPreClick = function(clicker)
+  local row = clicker.row
+  local data = row and row.elementData
+  if not data or data.isHeader then
+    clicker:SetAttribute("type", "")
+    return
+  end
+  if seams.IsModifiedClick("CHATLINK")
+     and HandleModifiedItemClick(C_CurrencyInfo.GetCurrencyLink(data.currencyID)) then
+    clicker:SetAttribute("type", "")   -- linked to chat, as on Blizzard's row
+    return
+  end
+  if seams.InCombat() or not seams.IsModifiedClick("TOKENWATCHTOGGLE") then
+    -- Not a watch toggle after all, or combat: the row's own click
+    clicker:SetAttribute("type", "")
+    OnEntryClick(row)
+    return
+  end
+  if not SetWatched(data, not data.isShowInBackpack) then
+    clicker:SetAttribute("type", "")
+    return
+  end
+  BeginBackpackHandoff(data.currencyID)
+end
+
+OnWatchPostClick = function(clicker)
+  clicker:SetAttribute("type", "macro")
+  FinishBackpackHandoff()
+end
+
+-- Shows watchClicker over the hovered result row while the watch modifier
+-- is held out of combat, and hides it otherwise (forceHide: always). Left
+-- alone during a hand-off; FinishBackpackHandoff runs it again.
+local updatingWatchClicker = false
+UpdateWatchClicker = function(forceHide)
+  if not watchClicker or updatingWatchClicker then return end
+  if IsBackpackDetour() and not forceHide then return end
+  updatingWatchClicker = true
+  local row = hoveredResultRow
+  local data = row and row.elementData
+  local show = not forceHide
+    and row ~= nil and resultRows[row] == true
+    and data ~= nil and not data.isHeader
+    and row:IsVisible() and row:IsMouseOver()
+    and not seams.InCombat()
+    and seams.IsModifiedClick("TOKENWATCHTOGGLE")
+  if show then
+    if watchClicker.row ~= row then
+      watchClicker.row = row
+      watchClicker:ClearAllPoints()
+      local star = stars[row]
+      local left = star and (STAR_LEFT_X + star:GetWidth()) or 0
+      watchClicker:SetPoint("TOPLEFT", row, "TOPLEFT", left, 0)
+      watchClicker:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+    end
+    watchClicker:SetFrameLevel(row:GetFrameLevel() + 10)
+    watchClicker:Show()
+  else
+    watchClicker.row = nil
+    watchClicker:Hide()
+  end
+  updatingWatchClicker = false
 end
 
 -------------------------------------------------------------------------------
@@ -1600,17 +1965,11 @@ RefreshFilterUI = function()
 end
 
 local function BuildSettingsButton()
-  return UI.CreateFilterStyleButton(TokenFrame, {
+  return UI.CreateSettingsGearButton(TokenFrame, {
     name = "CobysCurrencySearcherSettingsButton",
     -- Vertical center from Blizzard's dropdown, like the funnel and the box.
     point = { "RIGHT", TokenFrame.filterDropdown, "LEFT", -DROPDOWN_GAP, 0 },
-    glyphAtlas = SETTINGS_GLYPH_ATLAS,
-    glyphInset = SETTINGS_GLYPH_INSET,
-    tooltip = "Settings",
-    onClick = function()
-      PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
-      Config.ToggleSettings()
-    end,
+    onClick = Config.ToggleSettings,
   })
 end
 
@@ -1693,7 +2052,11 @@ local function Setup()
   -- can only be read after our ADDON_LOADED (immediately when Setup was
   -- deferred past it).
   EventUtil.ContinueOnAddOnLoaded("CobysCurrencySearcher", function()
-    searchBox:SetSearchDelay(Config.Get(Config.Options.SEARCH_DELAY))
+    local delay = Config.Get(Config.Options.SEARCH_DELAY)
+    if not CobySuite_CobysCurrencySearcher.Utilities.IsFiniteNumber(delay) then
+      delay = Config.Defaults[Config.Options.SEARCH_DELAY]
+    end
+    searchBox:SetSearchDelay(delay)
     LoadPersistedFilters()
   end)
 
@@ -1783,3 +2146,86 @@ function Search.OpenAndSearch(text)
   searchBox:SetText(text)
   searchBox:ClearFocus()
 end
+
+-------------------------------------------------------------------------------
+-- Test seams (SearchSuite). Nothing here is called by the addon itself.
+--
+-- WithState(state, fn) runs fn with this file's search state swapped for
+-- state's fields, and puts the live state back afterwards, even when fn
+-- errors. A field state leaves out starts neutral (no filters, no text, no
+-- hand-off in flight, empty caches), so a test never reads or writes the
+-- player's own search. Fields: filters, collapsed, query, descriptions,
+-- lastResults, selectedCurrencyID, popup (the live popup unless given),
+-- watchedOverrides, macroInFlight, macroMode, macroTarget, backpackHandoff.
+-------------------------------------------------------------------------------
+local function WithState(state, fn)
+  local saved = {
+    filters = filters, collapsed = collapsedInResults, query = query,
+    descriptions = descriptions, lastResults = lastResults,
+    selectedCurrencyID = selectedCurrencyID, popup = popup,
+    watchedOverrides = watchedOverrides, macroInFlight = macroInFlight,
+    macroMode = macroMode, macroTarget = macroTarget, backpackHandoff = backpackHandoff,
+  }
+  local function Pick(key, default)
+    if state[key] ~= nil then return state[key] end
+    return default
+  end
+  filters = Pick("filters", {})
+  collapsedInResults = Pick("collapsed", {})
+  query = Pick("query", "")
+  descriptions = Pick("descriptions", {})
+  lastResults = Pick("lastResults", nil)
+  selectedCurrencyID = Pick("selectedCurrencyID", nil)
+  popup = Pick("popup", saved.popup)
+  watchedOverrides = Pick("watchedOverrides", {})
+  macroInFlight = Pick("macroInFlight", false)
+  macroMode = Pick("macroMode", "transfer")
+  macroTarget = Pick("macroTarget", nil)
+  backpackHandoff = Pick("backpackHandoff", nil)
+
+  local ok, err = pcall(fn)
+
+  filters = saved.filters
+  collapsedInResults = saved.collapsed
+  query = saved.query
+  descriptions = saved.descriptions
+  lastResults = saved.lastResults
+  selectedCurrencyID = saved.selectedCurrencyID
+  popup = saved.popup
+  watchedOverrides = saved.watchedOverrides
+  macroInFlight = saved.macroInFlight
+  macroMode = saved.macroMode
+  macroTarget = saved.macroTarget
+  backpackHandoff = saved.backpackHandoff
+  if not ok then error(err, 0) end
+end
+
+Search._test = {
+  HANDOFF_ENABLED = SECURE_BACKPACK_HANDOFF,
+  seams = seams,
+  WithState = WithState,
+  BuildResults = BuildResults,
+  Matches = Matches,
+  PassesFilters = PassesFilters,
+  OnBackpackPreClick = OnBackpackPreClick,
+  OnBackpackPostClick = OnBackpackPostClick,
+  OnWatchPreClick = OnWatchPreClick,
+  OnWatchPostClick = OnWatchPostClick,
+  OnTransferPreClick = OnTransferPreClick,
+  OnTransferPostClick = OnTransferPostClick,
+  OnTokenFrameUpdated = OnTokenFrameUpdated,
+  OnTokenFrameHidden = OnTokenFrameHidden,
+  OnPopupShown = OnPopupShown,
+  OnPopupHidden = OnPopupHidden,
+  -- The swapped state as a fn inside WithState sees it
+  GetState = function()
+    return {
+      query = query,
+      selectedCurrencyID = selectedCurrencyID,
+      watchedOverrides = watchedOverrides,
+      macroInFlight = macroInFlight,
+      macroMode = macroMode,
+      backpackHandoff = backpackHandoff,
+    }
+  end,
+}

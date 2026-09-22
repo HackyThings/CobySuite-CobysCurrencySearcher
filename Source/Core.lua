@@ -25,7 +25,7 @@ local VERSION = C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "1.0.0"
 -- Registered through CobySuite.Slash, which generates help and version.
 -- Anything that is not a command is a search query (fallback).
 -------------------------------------------------------------------------------
-CobySuite.Slash.Register({
+CobySuite_CobysCurrencySearcher.Slash.Register({
   key = "COBYSCURRENCYSEARCHER",
   slashes = { "/ccs", "/cobyscurrencysearcher" },
   title = "Coby's Currency Searcher",
@@ -42,11 +42,26 @@ CobySuite.Slash.Register({
       end,
     },
     {
-      name = "debug", help = "Toggle the debug window",
+      name = "debug", help = "Open or close the debug log window",
       run = function()
         if CobysCurrencySearcher.DebugWindow then
           CobysCurrencySearcher.DebugWindow:Toggle()
         end
+      end,
+    },
+    -- Development only: the suites are stripped from release builds, and
+    -- available() hides the command from help there, so "/ccs test" is a
+    -- search again in a release
+    {
+      name = "test", usage = "test [suite]",
+      help = "Open the in-game test window, optionally running one suite",
+      available = function() return CobysCurrencySearcher.Tests ~= nil end,
+      run = function(rest)
+        local tests = CobysCurrencySearcher.Tests
+        if not tests then return end
+        tests.Window:Show()
+        local suite = rest and rest:match("^%s*(%S+)")
+        if suite then tests.RunSuite(suite) end
       end,
     },
   },

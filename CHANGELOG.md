@@ -4,6 +4,22 @@ All notable changes to Coby's Currency Searcher are documented here. Format foll
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-21
+
+### Changed
+
+- Redesigned settings window, with Search, Favorites and Filters as categories on the left.
+- Changes take effect when you press Apply. Cancel, or closing the window, throws them away. The Defaults button fills in every default for you to check, and nothing changes until you press Apply. It never unticks your filters.
+- The settings window opens in combat, even the first time.
+- Escape closes the debug log window.
+- `/ccs help` is in color: the command, what you fill in and its description each stand out.
+
+### Fixed
+
+- Show on Backpack from a search, with the popup's checkbox or Shift-click on a result, now updates Blizzard's own list underneath in the same click. After you clear the search, the next Shift-click on that currency in Blizzard's list reverses the check instead of repeating it, and with a full backpack bar the "too many" error no longer comes back on every click. You hear the character tab sound when this happens, and an open transfer menu closes. In combat the currency still goes on or off your backpack bar, but Blizzard's list underneath only gets its check mark updated, as before, until Blizzard's list next refreshes.
+- A damaged saved setting goes back to its default at login instead of causing errors.
+- Works correctly beside other Coby addons of different versions: each addon now carries its own private copy of the shared code, so an older one can no longer replace a newer one's.
+
 ## [1.0.1] - 2026-09-09
 
 ### Added
@@ -36,5 +52,7 @@ Initial release of Coby's Currency Searcher.
 - "Match descriptions too" option to search description text as well as names.
 - `/ccs <text>` searches the Currency tab for the text, or arms the search until you open the tab; `/ccs settings`, `/ccs debug`, `/ccs version`, `/ccs help`.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.2
+[1.0.1]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.1
 [1.0.0]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.0

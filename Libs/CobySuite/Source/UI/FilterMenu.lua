@@ -32,7 +32,7 @@
 --   funnel.Menu             -- the menu frame; funnel.Menu.rows[i].key
 --   funnel.ResetButton
 ---------------------------------------------------------------------------
-local UI = CobySuite.UI
+local UI = CobySuite_CobysCurrencySearcher.UI
 
 local BUTTON_WIDTH = 18
 local BUTTON_HEIGHT = 19
@@ -68,7 +68,8 @@ local MENU_OFFSET = { x = 6, y = 2 }   -- as Blizzard's filter dropdowns place t
 --   local gear = CobySuite.UI.CreateFilterStyleButton(parent, {
 --     name = "MyAddonSettingsButton", point = { ... },
 --     glyphAtlas = "GM-icon-settings", glyphInset = -1,   -- negative grows a padded glyph
---     glyphTint = { 1, 0.82, 0.1 },
+--     glyphTint = { 1, 0.82, 0.1 }, scale = 2,           -- optional; the badge is 18x19 at scale 1
+--     height = 24,                                       -- or size it to a neighbour's height
 --     tooltip = "Settings", onClick = function() ... end,
 --   })
 ---------------------------------------------------------------------------
@@ -95,6 +96,10 @@ function UI.CreateFilterStyleButton(parent, opts)
   assert(opts and opts.glyphAtlas, "CreateFilterStyleButton needs glyphAtlas")
   local button = CreateFrame("Button", opts.name, parent)
   button:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
+  -- opts.height sizes the badge to match a neighbour (a close button); opts.scale
+  -- is the raw factor. Either way, anchor offsets are in the scaled space.
+  local scale = opts.scale or (opts.height and opts.height / BUTTON_HEIGHT)
+  if scale then button:SetScale(scale) end
   if opts.point then button:SetPoint(unpack(opts.point)) end
   button:SetNormalAtlas(BUTTON_ATLAS.normal)
   button:SetPushedAtlas(BUTTON_ATLAS.pressed)
@@ -198,6 +203,7 @@ function UI.CreateFilterButton(parent, opts)
   assert(opts and opts.defs and opts.isChecked and opts.setChecked, "CreateFilterButton needs defs, isChecked and setChecked")
   local button = CreateFrame("Button", opts.name, parent)
   button:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
+  if opts.scale then button:SetScale(opts.scale) end   -- anchor offsets are in the scaled space
   if opts.point then button:SetPoint(unpack(opts.point)) end
   -- Same three textures as the objective tracker's filter button.
   button:SetNormalAtlas(BUTTON_ATLAS.normal)
@@ -264,4 +270,44 @@ function UI.CreateFilterButton(parent, opts)
   button.Menu = BuildMenu(button, opts)
   button:Refresh()
   return button
+end
+
+---------------------------------------------------------------------------
+-- CreateSettingsGearButton: the settings gear that pairs with the funnel
+--
+-- CreateFilterStyleButton with the raid manager's settings glyph
+-- (GM-icon-settings, padded for a 40px button, so grown by a pixel), the
+-- tooltip "Settings" and the checkbox click sound. Every addon that puts a
+-- gear beside a Blizzard list uses this so they all look the same.
+--
+--   local gear = CobySuite.UI.CreateSettingsGearButton(parent, {
+--     name    = "MyAddonSettingsButton",
+--     point   = { "RIGHT", anchor, "LEFT", -6, 0 },
+--     tooltip = "My Addon settings",            -- default SETTINGS
+--     onClick = function() Config.ToggleSettings() end,
+--     sound   = false,                          -- skip the click sound
+--     scale   = 2,                              -- the badge is 18x19 at scale 1
+--     height  = 24,                             -- or size it to a neighbour's height
+--   })
+---------------------------------------------------------------------------
+local SETTINGS_GLYPH_ATLAS = "GM-icon-settings"
+local SETTINGS_GLYPH_INSET = -1   -- the glyph atlas is padded for a 40px button
+
+function UI.CreateSettingsGearButton(parent, opts)
+  opts = opts or {}
+  return UI.CreateFilterStyleButton(parent, {
+    name          = opts.name,
+    point         = opts.point,
+    glyphAtlas    = SETTINGS_GLYPH_ATLAS,
+    glyphInset    = SETTINGS_GLYPH_INSET,
+    glyphTint     = opts.glyphTint,
+    scale         = opts.scale,
+    height        = opts.height,
+    tooltip       = opts.tooltip or SETTINGS or "Settings",
+    tooltipAnchor = opts.tooltipAnchor,
+    onClick       = function(...)
+      if opts.sound ~= false then PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON) end
+      if opts.onClick then opts.onClick(...) end
+    end,
+  })
 end

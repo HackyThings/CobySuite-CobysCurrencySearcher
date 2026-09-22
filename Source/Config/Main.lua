@@ -3,7 +3,7 @@ local Config = CobysCurrencySearcher.Config
 ---------------------------------------------------------------------------
 -- Shared config base via CobySuite.Config.New
 ---------------------------------------------------------------------------
-local base = CobySuite.Config.New({
+local base = CobySuite_CobysCurrencySearcher.Config.New({
   savedVariable = "COBYS_CURRENCY_SEARCHER_CONFIG",
   options = {
     MATCH_DESCRIPTIONS = "match_descriptions",
@@ -27,6 +27,20 @@ local base = CobySuite.Config.New({
     ["filters_persist"]    = false,
     ["saved_filters"]      = {},   -- never mutated in place: writers Set a fresh table
   },
+  -- Set refuses a failing value and InitializeData puts the default back for
+  -- a failing saved one (a hand-edited or damaged file). The ranges are what
+  -- the settings window offers, in 1.0.1 too, so an upgrade resets nothing.
+  -- saved_filters is a table and has no rule; InitializeData checks it.
+  validate = {
+    ["match_descriptions"]  = { type = "boolean" },
+    ["focus_on_open"]       = { type = "boolean" },
+    ["keep_text"]           = { type = "boolean" },
+    ["search_delay"]        = { type = "number", min = 0, max = 0.5 },
+    ["flat_results"]        = { type = "boolean" },
+    ["star_mode"]           = { type = "string", values = { "always", "results", "hover" } },
+    ["star_keep_favorites"] = { type = "boolean" },
+    ["filters_persist"]     = { type = "boolean" },
+  },
   quietKeys = { "saved_filters" },
   debug = CobysCurrencySearcher.Debug,
   onSet = function(name, old, value)
@@ -41,6 +55,7 @@ local base = CobySuite.Config.New({
 Config.Options       = base.Options
 Config.Defaults      = base.Defaults
 Config.IsValidOption = base.IsValidOption
+Config.CheckValue    = base.CheckValue
 Config.Get           = base.Get
 Config.Set           = base.Set
 Config.Reset         = base.Reset
@@ -51,10 +66,14 @@ Config.Reset         = base.Reset
 function Config.InitializeData()
   base.InitializeData()
 
-  if COBYS_CURRENCY_SEARCHER_WINDOW_STATE == nil then
+  -- Anything but a table here is a damaged file: start that table over
+  if type(COBYS_CURRENCY_SEARCHER_WINDOW_STATE) ~= "table" then
     COBYS_CURRENCY_SEARCHER_WINDOW_STATE = {}
   end
-  if COBYS_CURRENCY_SEARCHER_FAVORITES == nil then
+  if type(COBYS_CURRENCY_SEARCHER_FAVORITES) ~= "table" then
     COBYS_CURRENCY_SEARCHER_FAVORITES = {}
+  end
+  if type(COBYS_CURRENCY_SEARCHER_CONFIG.saved_filters) ~= "table" then
+    COBYS_CURRENCY_SEARCHER_CONFIG.saved_filters = {}
   end
 end
