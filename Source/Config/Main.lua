@@ -54,7 +54,6 @@ local base = CobySuite_CobysCurrencySearcher.Config.New({
 -- Install onto the CobysCurrencySearcher.Config namespace
 Config.Options       = base.Options
 Config.Defaults      = base.Defaults
-Config.IsValidOption = base.IsValidOption
 Config.CheckValue    = base.CheckValue
 Config.Get           = base.Get
 Config.Set           = base.Set

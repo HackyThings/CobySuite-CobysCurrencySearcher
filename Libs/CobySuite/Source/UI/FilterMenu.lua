@@ -19,6 +19,7 @@
 --     name  = "MyAddonFilterButton",          -- optional
 --     point = { "RIGHT", anchor, "LEFT", -6, 0 },
 --     defs  = {                                -- menu rows, in order
+--       { header = "Status" },                 -- optional group title: no key, not clickable
 --       { key = "owned", label = "Owned", tooltip = "Only what you have." },
 --     },
 --     isChecked  = function(key) return filters[key] == true end,
@@ -29,8 +30,12 @@
 --     menu = { name = "MyAddonFilterMenu", parent = parent, strata = "DIALOG" },
 --   })
 --   funnel:Refresh()        -- after filters change elsewhere
---   funnel.Menu             -- the menu frame; funnel.Menu.rows[i].key
+--   funnel.Menu             -- the menu frame; funnel.Menu.rows[i].key (checkbox
+--                           -- rows only, in order), funnel.Menu.headers[i] the titles
 --   funnel.ResetButton
+--
+-- A def with header and no key is a group title: a gold line above the rows
+-- that follow it, never checked, clicked or counted as a filter.
 ---------------------------------------------------------------------------
 local UI = CobySuite_CobysCurrencySearcher.UI
 
@@ -54,6 +59,13 @@ local MENU_EXTRA_WIDTH = 20        -- MenuStyle1's child extent padding
 local MENU_MIN_CONTENT_WIDTH = 80
 local MENU_ROW_HEIGHT = 20
 local MENU_OFFSET = { x = 6, y = 2 }   -- as Blizzard's filter dropdowns place their menu
+local MENU_HEADER_HEIGHT = 18
+local MENU_HEADER_GAP = 4          -- room above a title that follows other rows
+
+-- A group title def (header text, no key)
+local function IsHeader(def)
+  return def.key == nil and def.header ~= nil
+end
 
 ---------------------------------------------------------------------------
 -- CreateFilterStyleButton: the funnel's badge with another glyph on it
@@ -80,7 +92,7 @@ local BADGE_PATCH_SAMPLE = { 0.12, 0.22, 0.55, 0.70 } -- plain interior: left of
 
 local function CoverGlyph(button, atlasName)
   local info = C_Texture.GetAtlasInfo(atlasName)
-  if not info then return nil end
+  if not info then return end
   local patch = button:CreateTexture(nil, "OVERLAY", nil, 0)
   patch:SetTexture(info.file)
   local l, r = info.leftTexCoord, info.rightTexCoord
@@ -89,7 +101,6 @@ local function CoverGlyph(button, atlasName)
   patch:SetTexCoord(l + (r - l) * s[1], l + (r - l) * s[2], t + (b - t) * s[3], t + (b - t) * s[4])
   patch:SetPoint("TOPLEFT", BADGE_PATCH_INSET, -BADGE_PATCH_INSET)
   patch:SetPoint("BOTTOMRIGHT", -BADGE_PATCH_INSET, BADGE_PATCH_INSET)
-  return patch
 end
 
 function UI.CreateFilterStyleButton(parent, opts)
@@ -105,7 +116,7 @@ function UI.CreateFilterStyleButton(parent, opts)
   button:SetPushedAtlas(BUTTON_ATLAS.pressed)
   button:SetHighlightAtlas(BUTTON_ATLAS.highlight, "ADD")
 
-  button.Patch = CoverGlyph(button, BUTTON_ATLAS.normal)
+  CoverGlyph(button, BUTTON_ATLAS.normal)
 
   local inset = opts.glyphInset or 0
   local glyph = button:CreateTexture(nil, "OVERLAY", nil, 1)
@@ -130,10 +141,57 @@ function UI.CreateFilterStyleButton(parent, opts)
   return button
 end
 
+-- A group title: gold, not clickable, over the rows that follow it
+local function BuildTitle(menu, def, x, y)
+  local title = menu:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  title:SetPoint("TOPLEFT", x, -y)
+  title:SetHeight(MENU_HEADER_HEIGHT)
+  title:SetJustifyH("LEFT")
+  title:SetText(def.header)
+  return title, title:GetStringWidth()
+end
+
+-- One checkbox row; returns it and the width its content needs
+local function BuildCheckRow(menu, def, inset, y, onClick)
+  local row = CreateFrame("Button", nil, menu)
+  row.key = def.key
+  row:SetHeight(MENU_ROW_HEIGHT)
+  row:SetPoint("TOPLEFT", inset.left, -y)
+  row:SetPoint("RIGHT", -inset.right, 0)
+
+  local hover = row:CreateTexture(nil, "HIGHLIGHT")
+  hover:SetAtlas(MENU_ROW_HOVER_ATLAS)
+  hover:SetAllPoints()
+  hover:SetAlpha(MENU_ROW_HOVER_ALPHA)
+
+  -- MenuVariants.CreateCheckbox geometry.
+  local box = row:CreateTexture(nil, "ARTWORK")
+  box:SetAtlas(MENU_BOX_ATLAS, true)
+  box:SetPoint("LEFT")
+  local check = row:CreateTexture(nil, "OVERLAY")
+  check:SetAtlas(MENU_CHECK_ATLAS, true)
+  check:SetPoint("CENTER", box, "CENTER", 2, 1)
+  check:Hide()
+  row.Check = check
+
+  local text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  text:SetPoint("LEFT", box, "RIGHT", 7, 1)
+  text:SetHeight(MENU_ROW_HEIGHT)
+  text:SetText(def.label)
+  row.Text = text
+
+  row:SetScript("OnClick", onClick)
+  if def.tooltip then
+    UI.AddTooltip(row, def.tooltip, "ANCHOR_RIGHT")
+  end
+  return row, box:GetWidth() + 7 + text:GetStringWidth()
+end
+
 local function BuildMenu(button, opts)
   local menuOpts = opts.menu or {}
   local menu = CreateFrame("Frame", menuOpts.name, menuOpts.parent or button:GetParent())
   menu:SetFrameStrata(menuOpts.strata or "DIALOG")
+  menu:SetClampedToScreen(true)   -- a long, grouped menu stays on screen below a low window
   menu:EnableMouse(true)
   menu:SetPoint("TOPLEFT", button, "BOTTOMLEFT", MENU_OFFSET.x, MENU_OFFSET.y)
   menu:Hide()
@@ -154,44 +212,26 @@ local function BuildMenu(button, opts)
 
   local inset = MENU_INSET
   local contentWidth = MENU_MIN_CONTENT_WIDTH
+  local y = inset.top
   menu.rows = {}
+  menu.headers = {}
   for i, def in ipairs(opts.defs) do
-    local row = CreateFrame("Button", nil, menu)
-    row.key = def.key
-    row:SetHeight(MENU_ROW_HEIGHT)
-    row:SetPoint("TOPLEFT", inset.left, -(inset.top + (i - 1) * MENU_ROW_HEIGHT))
-    row:SetPoint("RIGHT", -inset.right, 0)
-
-    local hover = row:CreateTexture(nil, "HIGHLIGHT")
-    hover:SetAtlas(MENU_ROW_HOVER_ATLAS)
-    hover:SetAllPoints()
-    hover:SetAlpha(MENU_ROW_HOVER_ALPHA)
-
-    -- MenuVariants.CreateCheckbox geometry.
-    local box = row:CreateTexture(nil, "ARTWORK")
-    box:SetAtlas(MENU_BOX_ATLAS, true)
-    box:SetPoint("LEFT")
-    local check = row:CreateTexture(nil, "OVERLAY")
-    check:SetAtlas(MENU_CHECK_ATLAS, true)
-    check:SetPoint("CENTER", box, "CENTER", 2, 1)
-    check:Hide()
-    row.Check = check
-
-    local text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    text:SetPoint("LEFT", box, "RIGHT", 7, 1)
-    text:SetHeight(MENU_ROW_HEIGHT)
-    text:SetText(def.label)
-    row.Text = text
-
-    row:SetScript("OnClick", OnRowClick)
-    if def.tooltip then
-      UI.AddTooltip(row, def.tooltip, "ANCHOR_RIGHT")
+    local width
+    if IsHeader(def) then
+      if i > 1 then y = y + MENU_HEADER_GAP end
+      local title
+      title, width = BuildTitle(menu, def, inset.left, y)
+      menu.headers[#menu.headers + 1] = title
+      y = y + MENU_HEADER_HEIGHT
+    else
+      local row
+      row, width = BuildCheckRow(menu, def, inset, y, OnRowClick)
+      menu.rows[#menu.rows + 1] = row
+      y = y + MENU_ROW_HEIGHT
     end
-    contentWidth = math.max(contentWidth, box:GetWidth() + 7 + text:GetStringWidth())
-    menu.rows[i] = row
+    contentWidth = math.max(contentWidth, width)
   end
-  menu:SetSize(inset.left + contentWidth + MENU_EXTRA_WIDTH + inset.right,
-    inset.top + #opts.defs * MENU_ROW_HEIGHT + inset.bottom)
+  menu:SetSize(inset.left + contentWidth + MENU_EXTRA_WIDTH + inset.right, y + inset.bottom)
 
   -- The button's "open" look follows the menu.
   menu:SetScript("OnHide", function() button:Refresh() end)
@@ -212,7 +252,7 @@ function UI.CreateFilterButton(parent, opts)
 
   local function AnyChecked()
     for _, def in ipairs(opts.defs) do
-      if opts.isChecked(def.key) then return true end
+      if not IsHeader(def) and opts.isChecked(def.key) then return true end
     end
     return false
   end
@@ -253,7 +293,7 @@ function UI.CreateFilterButton(parent, opts)
     GameTooltip_SetTitle(GameTooltip, opts.tooltipTitle or FILTER or "Filter")
     local active = {}
     for _, def in ipairs(opts.defs) do
-      if opts.isChecked(def.key) then
+      if not IsHeader(def) and opts.isChecked(def.key) then
         active[#active + 1] = def.label
       end
     end

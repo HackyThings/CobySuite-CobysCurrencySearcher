@@ -19,8 +19,8 @@ Older search addons hid rows after Blizzard drew the list, which left the tab fu
 1. **Open the character window and pick the Currency tab.** The search box, a funnel icon and a settings gear sit between your portrait and Blizzard's filter dropdown, in Blizzard's own styles.
 2. **Type.** After a short pause only the matching currencies are shown. Headers stay in place above their matches so you can see where each one lives. No gaps. (Flat results, in the settings, drops the headers and puts each currency's group after its name instead.)
 3. **Collapsed headers are searched too.** Currencies inside headers you keep collapsed are found; your headers are never changed.
-4. **Type a header name to see the whole group.** Searching "Midnight" or "Dungeon and Raid" shows every currency under that header.
-5. **Filter to what matters.** Click the funnel next to the search box and tick Transferable to shrink the list to the currencies that can move between the characters of your Warband, Owned to hide every currency you have none of, Capped for the ones at their maximum or this week's cap (spend before you waste), Weekly for the ones with a weekly earning limit, or On Backpack for the ones on your backpack bar, with or without search text. Filters combine: Owned plus Transferable is exactly what you could move right now. A red x on the funnel shows a filter is on; click it to clear.
+4. **Type a header name to see the whole group.** Searching "Midnight" or "Dungeon and Raid" shows every currency under that header (with a filter on, only the ones that pass it).
+5. **Filter to what matters.** Click the funnel next to the search box and tick Transferable to shrink the list to the currencies that can move between the characters of your Warband, Owned to hide every currency you have none of, Capped for the ones at their maximum or this week's cap (spend before you waste), Weekly for the ones with a weekly earning limit, or On Backpack for the ones on your backpack bar, with or without search text. Filters combine: Owned plus Transferable shows the transferable currencies this character holds. A red x on the funnel shows a filter is on; click it to clear.
 6. **Star your favorites.** Every currency row starts with a star, in Blizzard's list and in search results; click it. The star stays lit, is saved for your whole account, and never changes the order of anything. Tick Favorites in the filter menu to see only your starred currencies. Blizzard's warband badge, shown when you hover a transferable currency, sits right of the star. Prefer a cleaner list? A setting shows stars only on search results, or only on the row under the mouse.
 7. **Clearing is one keypress.** Escape, the clear button, or closing the window all clear the search text, so the tab opens clean next time (a setting keeps the text instead). Filters stay on until you clear them.
 
@@ -28,7 +28,7 @@ Edge cases it handles:
 
 - **Nested sub-headers.** A collapsed sub-header inside a collapsed expansion header is found too. Same-named sub-headers under different parents are kept apart.
 - **Headers in the results.** Collapse a header in the results and only the results hide its rows; your real headers are untouched.
-- **Clicking a result opens its options right there.** Unused and Show on Backpack work from the popup and the search stays. Show on Backpack, from the popup or with the modified click on a result, also refreshes Blizzard's own list underneath in the same click (you hear the character tab sound), so the row is right when you clear the search; a transfer menu that is open closes. In combat the backpack bar still changes, but Blizzard's list only gets its check mark updated until Blizzard's list next refreshes. Transfer opens the transfer menu for that currency beside the window and your search stays put; the amounts in the results update as soon as the transfer lands. (Under the hood Transfer has to run from Blizzard's own list, so the addon briefly selects the currency there and puts your search straight back, all in the same click. Your headers go back to how you had them when you close the tab.)
+- **Clicking a result opens its options right there.** Unused and Show on Backpack work from the popup and the search stays. Show on Backpack, from the popup or with the modified click on a result, also refreshes Blizzard's own list underneath in the same click (you hear the character tab sound twice), so the row is right when you clear the search; a transfer menu that is open closes. In combat the backpack bar still changes, but Blizzard's list only gets its check mark updated until Blizzard's list next refreshes. Transfer opens the transfer menu for that currency beside the window and your search stays put; the amounts in the results update as soon as the transfer lands. (Under the hood Transfer has to run from Blizzard's own list, so the addon briefly selects the currency there and puts your search straight back, all in the same click. Your headers go back to how you had them when you close the tab.)
 - **Row actions.** Tooltips, shift-click to link, and the modified click that toggles the backpack watch work on results the same way they do on Blizzard's rows.
 - **Account-wide view still loading.** If Blizzard is still fetching account currency data when you type, the results fill in the moment the data arrives.
 - **Logging in during combat.** Addons cannot build frames in combat, so the search box is added the moment combat ends. Nothing to do on your end.
@@ -42,18 +42,20 @@ Edge cases it handles:
 ## Slash Commands
 
 ```
-/ccs <text>       Open the Currency tab and search for <text>
-/ccs settings     Open the settings window (also /ccs config, /ccs show)
+/ccs <text>       Search the Currency tab for <text> (asks for one click if the window is on another tab)
+/ccs settings     Open or close the settings window (also /ccs config, /ccs show)
 /ccs debug        Toggle the debug log window
 /ccs version      Print the addon version
 /ccs help         Command list
 ```
 
-`/cobyscurrencysearcher` works the same as `/ccs`.
+`/cobyscurrencysearcher` works the same as `/ccs`, and `/ccs` on its own prints the command list.
+
+`/ccs <text>` searches straight away when the Currency tab is showing, or when the character window was last left on it. Otherwise a small window asks you to click Go to Currency, and your search runs as soon as the tab opens: the game only lets your own click change that tab without later blocking actions on it, such as warband transfers. In combat, `/ccs` waits and asks once combat ends.
 
 ## Settings
 
-Open with `/ccs settings` or the gear icon beside the funnel. The settings are grouped into categories on the left. Changes take effect when you press Apply; Cancel or closing the window throws them away. Defaults fills in every default, and nothing changes until you press Apply.
+Open with `/ccs settings` or the gear icon beside the funnel. The settings are grouped into categories on the left. Changes take effect when you press Apply; Cancel or closing the window throws them away. Defaults asks first, then fills in every default, and nothing changes until you press Apply. Drag the window's bottom-right corner to make it bigger; it keeps that size.
 
 **Search**
 - Match descriptions too (default off. Also matches the search text against each currency's description, not only its name. Handy when you remember what a currency buys but not what it is called.)
@@ -85,7 +87,7 @@ Open with `/ccs settings` or the gear icon beside the funnel. The settings are g
 **There is no search box on the Currency tab.**
 
 - If you logged in during combat, the box appears once combat ends.
-- Run `/ccs debug`. If the log says the Currency tab is missing or changed shape, another addon has replaced or reshaped the tab, or a WoW patch changed it. Either way, the log is what I need to fix it (see below).
+- Run `/ccs debug`. If the log says "TokenFrame is missing or changed shape" (TokenFrame is the Currency tab), another addon has replaced or reshaped the tab, or a WoW patch changed it. Either way, the log is what I need to fix it (see below).
 
 **I clicked Transfer and got a message to scroll down.**
 
@@ -102,6 +104,10 @@ Open with `/ccs settings` or the gear icon beside the funnel. The settings are g
 **`/ccs <text>` says the search box is not available.**
 
 - Same causes as "There is no search box on the Currency tab" above: you logged in during combat (it appears when combat ends), or the tab was replaced or reshaped. The command needs the box to be installed on the tab first.
+
+**`/ccs <text>` says the Currency tab could not be opened here.**
+
+- The character window is turned off where you are, or the game refused to open it. Open it yourself when you can and type in the search box.
 
 ## License
 

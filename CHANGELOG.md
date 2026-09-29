@@ -4,6 +4,16 @@ All notable changes to Coby's Currency Searcher are documented here. Format foll
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-09-29
+
+### Changed
+
+- **Windows no longer stay on top of the game's own windows.** Coby's Currency Searcher's windows now sit with the game's panels: clicking any window brings it to the front, and a window opens in front. Only questions that need an answer, such as confirmations, stay above everything.
+- The settings window can now be made bigger by dragging its bottom-right corner, and it remembers its size.
+- Settings sections sit closer together, so each group reads as one block.
+- The command list in chat (`/ccs help`) is easier to read: commands in gold and their descriptions in white.
+- `/ccs <text>` no longer switches the character window to its Currency tab by itself. When the window was last left on the Currency tab, it opens and searches right away as before; otherwise a small window asks you to click **Go to Currency**, and your search runs as soon as the tab opens. The game only lets your own click change that tab without later blaming the addon for blocked actions on it, such as warband transfers. In combat, `/ccs` waits and asks once combat ends.
+
 ## [1.0.2] - 2026-09-21
 
 ### Changed
@@ -52,7 +62,8 @@ Initial release of Coby's Currency Searcher.
 - "Match descriptions too" option to search description text as well as names.
 - `/ccs <text>` searches the Currency tab for the text, or arms the search until you open the tab; `/ccs settings`, `/ccs debug`, `/ccs version`, `/ccs help`.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.3
 [1.0.2]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.2
 [1.0.1]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.1
 [1.0.0]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.0

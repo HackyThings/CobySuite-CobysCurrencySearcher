@@ -1,6 +1,6 @@
 ## Interface: 120100
 ## Title: Coby's Currency Searcher
-## Version: 1.0.2
+## Version: 1.0.3
 ## Author: Cobanyte
 ## Notes: Adds a search box to the Currency tab. Finds currencies inside collapsed headers and filters the list without gaps.
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01

@@ -14,7 +14,8 @@
 --     ADDON_ACTION_FORBIDDEN. Only Blizzard's own rebuild of its own list,
 --     from a user action such as opening the tab or clicking a header, gives
 --     clean rows. So Blizzard's list is never touched: no data-provider swap,
---     no Update() calls, no scrolling, no writes to TokenFrame fields.
+--     no Update() calls (one exception, after an Unused change: see
+--     ApplySearchState), no scrolling, no writes to TokenFrame fields.
 --   * While a search is active, Blizzard's ScrollBox and ScrollBar are faded
 --     to alpha 0 (a C-side property, no scripts run) and our results ScrollBox
 --     and ScrollBar are shown in the same place, built from the same Blizzard
@@ -182,6 +183,12 @@ local TRANSFER_MACRO = "/click CharacterFrameTab1\n/click CharacterFrameTab3\n/c
 local SECURE_BACKPACK_HANDOFF = true
 local BACKPACK_MACRO = "/click CharacterFrameTab1\n/click CharacterFrameTab3"
 
+-- /ccs's one-click prompt (see "Opening the Currency tab from /ccs"): the
+-- character window's own Currency tab, clicked on the secure path.
+local CURRENCY_TAB_MACRO = "/click CharacterFrameTab3"
+local PROMPT_WIDTH, PROMPT_HEIGHT, PROMPT_PAD = 400, 150, 16
+local PROMPT_ICON = "Interface\\Icons\\INV_Misc_Coin_01"   -- the TOC's IconTexture
+
 local searchBox
 local emptyLabel
 local query = ""           -- normalized active query; "" when no search text is active
@@ -210,14 +217,17 @@ local transferStep         -- CobysCurrencySearcherTransferStep, the /click dele
 local macroInFlight = false  -- true from a secure clicker's PreClick to its PostClick (Transfer or Show on Backpack)
 local macroMode = "transfer" -- which hand-off is in flight: "transfer" or "backpack"
 local macroTarget          -- { currencyID, name, path, ancestors } for the transfer hand-off in flight
-local backpackHandoff      -- { currencyID, popupCurrencyID, rebuilt } for the backpack hand-off in flight
+local backpackHandoff      -- { popupCurrencyID, rebuilt, hadFocus } for the backpack hand-off in flight
 local watchClicker         -- the secure clicker over the hovered result row while the watch modifier is held
 local hoveredResultRow     -- result row under the mouse, for watchClicker
 local seams                -- test seams (Search._test.seams); filled in beside SetWatched
-local stashedSearch        -- { text, filters } to bring back once the transfer menu is open
+local stashedSearch        -- { text, filters, scroll } to bring back once the transfer menu is open
 local refreshQuantities    -- Coalesce handle for CURRENCY_DISPLAY_UPDATE refreshes (see OnCurrencyDisplayUpdate)
 local lastCollapsedKeys    -- header path keys that were collapsed at the last snapshot
 local restoreCollapsedKeys -- collapse state to put back on tab hide (nil = nothing to restore)
+local openPrompt           -- /ccs's "Go to Currency" window; built in Setup
+local pendingSearch        -- /ccs text waiting for the Currency tab to show (nil = none)
+local promptAfterCombat = false  -- /ccs asked in combat: show the prompt once it ends
 
 -------------------------------------------------------------------------------
 -- Header path keys
@@ -377,7 +387,7 @@ local function CollapseAllExcept(ancestorKeys)
 end
 
 -- Puts the user's collapse state back: everything expanded except the keys
--- recorded before the first result click.
+-- recorded before the first transfer hand-off (OnTransferPreClick).
 local function RestoreCollapseState()
   if not restoreCollapsedKeys then return end
   local keys = restoreCollapsedKeys
@@ -1171,11 +1181,12 @@ local function NumWatchedTokens(maxWatched)
   return n
 end
 
--- Test seams (Search._test.seams): every call the Show on Backpack paths
--- make that reaches the game or Blizzard's frames, read at call time so the
--- SearchSuite can stand in for them (MockHarness OverrideField) without
--- changing a real currency, showing an error or running the macro's
--- effects. Production code always goes through them.
+-- Test seams (Search._test.seams): every call the Show on Backpack paths,
+-- the transfer delegates and /ccs (Search.OpenAndSearch) make that reaches
+-- the game or Blizzard's frames, read at call time so the SearchSuite can
+-- stand in for them (MockHarness OverrideField) without changing a real
+-- currency, showing an error or running the macro's effects. Production
+-- code always goes through them.
 seams = {
   InCombat = function() return InCombatLockdown() end,
   IsModifiedClick = function(action) return IsModifiedClick(action) end,
@@ -1191,6 +1202,24 @@ seams = {
   ShowOverlay = function() ShowOverlay() end,
   ArmClickStep = function(row) if clickStep then clickStep:SetAttribute("clickbutton", row) end end,
   ArmTransferStep = function(button) if transferStep then transferStep:SetAttribute("clickbutton", button) end end,
+  -- /ccs (Search.OpenAndSearch): the character window and its Currency tab
+  CharacterPanelDisabled = function()
+    local ok, on = pcall(function() return C_GameRules.IsGameRuleActive(Enum.GameRule.CharacterPanelDisabled) end)
+    return ok and on == true
+  end,
+  TabVisible = function() return TokenFrame:IsVisible() end,
+  -- TokenFrame's own shown flag: Currency is the character window's current
+  -- tab, even while the window is closed
+  TabIsCurrent = function() return TokenFrame:IsShown() end,
+  WindowShown = function() return CharacterFrame:IsShown() end,
+  ShowWindow = function() ShowUIPanel(CharacterFrame) end,
+  SetSearchText = function(text)
+    searchBox:SetText(text)
+    searchBox:ClearFocus()
+  end,
+  Message = function(text) Utilities.Message(text) end,
+  After = function(seconds, fn) C_Timer.After(seconds, fn) end,
+  AfterCombat = function(fn) EventUtil.RegisterOnceFrameEventAndCallback("PLAYER_REGEN_ENABLED", fn) end,
 }
 
 -- Show on Backpack. By currency id, so no list index is needed and Blizzard's
@@ -1225,7 +1254,7 @@ end
 -- list. Marking a currency unused moves it into the Unused group, which
 -- reorders the game's list underneath Blizzard's hidden rows; that is the one
 -- action here that leaves their list stale, so the next search clear rebuilds
--- it (see SetQuery). Blizzard's own list goes stale the same way whenever a
+-- it (see ApplySearchState). Blizzard's own list goes stale the same way whenever a
 -- currency is discovered while the tab is open.
 local function SetUnused(data, unused)
   local applied = WithExpandedIndex(data.currencyID, function(index)
@@ -1389,13 +1418,11 @@ local function BuildPopup()
     end)
     backpackClicker:SetScript("OnMouseDown", Forward(backpack, "OnMouseDown"))
     backpackClicker:SetScript("OnMouseUp", Forward(backpack, "OnMouseUp"))
-    backpack.clicker = backpackClicker
   end
 
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", -2, -2)
   close:SetScript("OnClick", function() f:Hide() end)
-  f.CloseButton = close
 
   f:SetScript("OnShow", OnPopupShown)
   f:SetScript("OnHide", OnPopupHidden)
@@ -1526,8 +1553,9 @@ end
 -- works from it. The row step was verified in-game on 2026-09-08, the
 -- toggle step on 2026-09-09.
 --
--- Before the macro, PreClick stashes the search (text and filters), clears
--- it, records the user's collapse state (restored when the tab hides) and
+-- Before the macro, PreClick stashes the search (text, filters and the
+-- results' scroll position), clears it, records the user's collapse state
+-- (restored when the tab hides) and
 -- folds every header except the target's chain, so the rebuilt list has the
 -- target within its first screen of rows. There is no secure way to scroll
 -- Blizzard's list, so a target that still lands below the first screen is
@@ -1791,9 +1819,8 @@ local function PlayCheckSound(watched)
   seams.PlaySound(watched and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
 end
 
-local function BeginBackpackHandoff(currencyID)
+local function BeginBackpackHandoff()
   backpackHandoff = {
-    currencyID = currencyID,
     popupCurrencyID = (popup and popup:IsShown()) and selectedCurrencyID or nil,
     rebuilt = false,
     -- The tab switch hides the search box, which can cost it the keyboard
@@ -1859,7 +1886,7 @@ OnBackpackPreClick = function(clicker)
   end
   checkbox:SetChecked(watched)
   PlayCheckSound(watched)
-  BeginBackpackHandoff(data.currencyID)
+  BeginBackpackHandoff()
 end
 
 OnBackpackPostClick = function(clicker)
@@ -1890,7 +1917,7 @@ OnWatchPreClick = function(clicker)
     clicker:SetAttribute("type", "")
     return
   end
-  BeginBackpackHandoff(data.currencyID)
+  BeginBackpackHandoff()
 end
 
 OnWatchPostClick = function(clicker)
@@ -1988,6 +2015,109 @@ local function BuildFilterButton()
 end
 
 -------------------------------------------------------------------------------
+-- Opening the Currency tab from /ccs
+--
+-- ToggleCharacter("TokenFrame") run from addon code writes CharacterFrame's
+-- selectedTab (PanelTemplates_SetTab) and activeSubframe (ShowSubFrame)
+-- with our taint before the panel manager shows the window (the Taint
+-- suite's first in-game run, 2026-09-28; CharacterFrame.lua in
+-- Blizzard_UIPanels_Game). So the addon never picks the window's tab:
+-- - the Currency tab is on screen: search at once
+-- - the window is closed and Currency is its current tab (TokenFrame's own
+--   shown flag): ShowUIPanel(CharacterFrame), the panel manager's secure
+--   path, shows it with TokenFrame's OnShow, then search
+-- - otherwise: a small window of ours asks for one click. Go to Currency
+--   is an insecure action button running CURRENCY_TAB_MACRO: the tab's own
+--   OnClick (CharacterFrame:ToggleTokenFrame, then ToggleCharacter) runs on
+--   the secure path, opening a closed window on the Currency tab or
+--   switching an open one to it. That click would close the window if the
+--   Currency tab were already showing, so the prompt hides whenever
+--   TokenFrame shows. The text waits in pendingSearch and is filled in a
+--   frame after TokenFrame shows, by that click or the player's own.
+-- A slash command can't make the secure click itself, hence the one click
+-- (Cobanyte, 2026-09-28).
+-------------------------------------------------------------------------------
+local function PromptBody(text)
+  local what = (text and text ~= "") and ('your search for "' .. text .. '" runs there') or "the Currency tab opens"
+  return "The character window isn't on its Currency tab. Click Go to Currency and " .. what .. ".\n\n"
+    .. "Addons can't switch that tab for you without the game later blocking actions on it, "
+    .. "such as warband transfers, so it takes your click."
+end
+
+-- Hides the prompt; its OnHide drops the waiting text (Cancel, the X,
+-- Escape) unless keepText
+local function HidePrompt(keepText)
+  if not (openPrompt and openPrompt:IsShown()) then return end
+  local text = pendingSearch
+  openPrompt:Hide()
+  if keepText then pendingSearch = text end
+end
+
+local function ShowPrompt()
+  if not openPrompt then return false end
+  openPrompt.Body:SetText(PromptBody(pendingSearch))
+  openPrompt:Show()
+  return true
+end
+
+-- A frame after TokenFrame showed: the waiting text goes in the box
+local function ApplyPendingSearch()
+  local text = pendingSearch
+  pendingSearch = nil
+  if text ~= nil and seams.TabVisible() then seams.SetSearchText(text) end
+end
+
+-- TokenFrame's OnShow (our hook): with a /ccs text waiting, the prompt goes
+-- (its tab click would now close the window) and the text follows a frame
+-- later, outside the click that showed the tab
+local function OnTokenFrameShown()
+  if macroInFlight or pendingSearch == nil then return end
+  HidePrompt(true)
+  seams.After(0, ApplyPendingSearch)
+end
+
+local function OnCombatEndedForPrompt()
+  if not promptAfterCombat then return end
+  promptAfterCombat = false
+  if pendingSearch == nil then return end
+  if seams.TabVisible() then return ApplyPendingSearch() end
+  ShowPrompt()
+end
+
+local function BuildOpenPrompt()
+  local f = UI.CreateWindow({
+    name = "CobysCurrencySearcherOpenPrompt", title = "Coby's Currency Searcher", icon = PROMPT_ICON,
+    width = PROMPT_WIDTH, height = PROMPT_HEIGHT, strata = "DIALOG", escapeCloses = true,
+    point = { "CENTER", UIParent, "CENTER", 0, 120 },
+  })
+  f.Body = f:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
+  f.Body:SetPoint("TOPLEFT", f, "TOPLEFT", PROMPT_PAD, -34)
+  f.Body:SetWidth(PROMPT_WIDTH - 2 * PROMPT_PAD)
+  f.Body:SetJustifyH("LEFT")
+  f.Body:SetWordWrap(true)
+  -- the shared button's look on an insecure action button, configured like
+  -- the Transfer clicker: the macro runs once, on release, never modified
+  f.Go = UI.CreateButton(f, { text = "Go to Currency", size = { 150, U.ButtonSize.MEDIUM.height },
+    point = { "BOTTOMLEFT", f, "BOTTOMLEFT", PROMPT_PAD, 14 }, template = "UIPanelButtonTemplate, InsecureActionButtonTemplate" })
+  SetMacroClickerAttributes(f.Go, CURRENCY_TAB_MACRO, true)
+  f.Go:HookScript("PostClick", function()
+    -- the insecure template refuses in combat
+    if seams.InCombat() then
+      seams.Message("The Currency tab can't be opened from here in combat; click Go to Currency again once combat ends.")
+    end
+  end)
+  UI.CreateButton(f, { text = "Cancel", size = { 110, U.ButtonSize.MEDIUM.height },
+    point = { "BOTTOMRIGHT", f, "BOTTOMRIGHT", -PROMPT_PAD, 14 },
+    onClick = function() f:Hide() end })
+  f:HookScript("OnHide", function()
+    pendingSearch = nil
+    promptAfterCombat = false
+  end)
+  f:Hide()
+  return f
+end
+
+-------------------------------------------------------------------------------
 -- Setup
 -------------------------------------------------------------------------------
 local function Setup()
@@ -2006,8 +2136,8 @@ local function Setup()
   end
 
   if not Favorites then
-    -- Only ever seen in development: a file added to the TOC is not read
-    -- by /reload, so Favorites/Main.lua has not loaded yet.
+    -- Only ever seen in development, when Favorites/Main.lua has not loaded
+    -- (missing from the TOC or failed to load).
     Debug.Warn("INIT", "Favorites module missing; the TOC was not re-read. Log out and back in")
     Utilities.Message("The Favorites module did not load. Log out to the character screen and back in.")
   end
@@ -2017,6 +2147,7 @@ local function Setup()
   settingsButton = BuildSettingsButton()
   filterButton = BuildFilterButton()
   searchBox = BuildSearchBox()
+  openPrompt = BuildOpenPrompt()
 
   -- The /click delegates of TRANSFER_MACRO (see "Secure transfer hand-off").
   -- Created once each: GetClickFrame caches the first object registered
@@ -2040,10 +2171,11 @@ local function Setup()
   hooksecurefunc(TokenFrame, "Update", OnTokenFrameUpdated)
   TokenFrame:HookScript("OnHide", OnTokenFrameHidden)
   TokenFrame:HookScript("OnShow", function()
-    -- Not during the transfer hand-off's tab detour.
+    -- Not during a hand-off's tab detour (transfer or backpack).
     if not macroInFlight and Config.Get(Config.Options.FOCUS_ON_OPEN) then
       searchBox:SetFocus()
     end
+    OnTokenFrameShown()
   end)
 
   CobysCurrencySearcher.EventBus:Register(Search, { CobysCurrencySearcher.Events.ConfigChanged })
@@ -2085,7 +2217,6 @@ EventUtil.ContinueOnAddOnLoaded("Blizzard_TokenUI", InstallStarHook)
 -- EventBus
 -------------------------------------------------------------------------------
 function Search:ReceiveEvent(eventName, optionName)
-  if eventName ~= CobysCurrencySearcher.Events.ConfigChanged then return end
   if optionName == Config.Options.SAVED_FILTERS then return end   -- our own write
   -- Persistence switched: start saving the current set, or forget the saved one.
   if optionName == nil or optionName == Config.Options.FILTERS_PERSIST then
@@ -2115,36 +2246,60 @@ end
 -- Public API
 -------------------------------------------------------------------------------
 
--- Opens the Currency tab if needed and searches for `text`. The open goes
--- through ShowUIPanel, which shows the window on a secure path even when we
--- call it, so the rows Blizzard builds on that OnShow are clean (verified
--- in-game 2026-09-08: a transfer from a row of a tab opened this way works).
--- ShowSubFrame on an already-open window would show the tab inside our
--- execution instead, so the window is closed first in that case.
+-- Opens the Currency tab if needed and searches for `text`, never
+-- switching the character window's tab from addon code (see "Opening the
+-- Currency tab from /ccs"). Returns "searched" (the tab was on screen),
+-- "opened" (the window opened on it through ShowUIPanel), "prompt" (our
+-- window asks for the click), "waiting" (in combat; the prompt shows once
+-- it ends) or "refused".
 function Search.OpenAndSearch(text)
   if not searchBox then
     Debug.Warn("SEARCH", "/ccs refused: search box not installed")
     Utilities.Message("The Currency tab search box is not available.")
-    return
+    return "refused"
   end
   text = strtrim(text or "")
   -- IsVisible, not IsShown: the tab can be shown inside a hidden character
   -- frame.
-  if not TokenFrame:IsVisible() then
-    if CharacterFrame:IsShown() then
-      HideUIPanel(CharacterFrame)
+  if seams.TabVisible() then
+    pendingSearch = nil
+    seams.SetSearchText(text)
+    return "searched"
+  end
+  if seams.CharacterPanelDisabled() then
+    Debug.Warn("SEARCH", "/ccs refused: the character window is turned off here")
+    seams.Message("The Currency tab could not be opened here.")
+    return "refused"
+  end
+  if not seams.WindowShown() and seams.TabIsCurrent() then
+    seams.ShowWindow()
+    if seams.TabVisible() then
+      pendingSearch = nil
+      seams.SetSearchText(text)
+      return "opened"
     end
-    ToggleCharacter("TokenFrame", true)
-  end
-  if not TokenFrame:IsVisible() then
-    -- ToggleCharacter is a no-op under the CharacterPanelDisabled game rule
-    -- and ShowUIPanel can refuse the panel.
+    -- ShowUIPanel can refuse the panel
     Debug.Warn("SEARCH", "/ccs refused: the Currency tab could not be opened")
-    Utilities.Message("The Currency tab could not be opened here.")
-    return
+    seams.Message("The Currency tab could not be opened here.")
+    return "refused"
   end
-  searchBox:SetText(text)
-  searchBox:ClearFocus()
+  -- Currency isn't the window's tab: one click on the prompt's secure button
+  pendingSearch = text
+  if seams.InCombat() then
+    if not promptAfterCombat then
+      promptAfterCombat = true
+      seams.AfterCombat(OnCombatEndedForPrompt)
+    end
+    seams.Message("The Currency tab button shows once combat ends.")
+    Debug.Log("SEARCH", "/ccs in combat: the prompt waits for combat to end")
+    return "waiting"
+  end
+  if not ShowPrompt() then
+    pendingSearch = nil
+    return "refused"
+  end
+  Debug.Log("SEARCH", "/ccs: the Currency tab isn't current; asked for the click")
+  return "prompt"
 end
 
 -------------------------------------------------------------------------------
@@ -2156,7 +2311,10 @@ end
 -- hand-off in flight, empty caches), so a test never reads or writes the
 -- player's own search. Fields: filters, collapsed, query, descriptions,
 -- lastResults, selectedCurrencyID, popup (the live popup unless given),
--- watchedOverrides, macroInFlight, macroMode, macroTarget, backpackHandoff.
+-- watchedOverrides, macroInFlight, macroMode, macroTarget, backpackHandoff,
+-- stashedSearch, restoreCollapsedKeys, blizzardListStale (so a handler
+-- under test never drops the live stash or a pending rebuild of a stale
+-- list), pendingSearch and promptAfterCombat (/ccs's waiting text).
 -------------------------------------------------------------------------------
 local function WithState(state, fn)
   local saved = {
@@ -2165,6 +2323,9 @@ local function WithState(state, fn)
     selectedCurrencyID = selectedCurrencyID, popup = popup,
     watchedOverrides = watchedOverrides, macroInFlight = macroInFlight,
     macroMode = macroMode, macroTarget = macroTarget, backpackHandoff = backpackHandoff,
+    stashedSearch = stashedSearch, restoreCollapsedKeys = restoreCollapsedKeys,
+    blizzardListStale = blizzardListStale,
+    pendingSearch = pendingSearch, promptAfterCombat = promptAfterCombat,
   }
   local function Pick(key, default)
     if state[key] ~= nil then return state[key] end
@@ -2182,6 +2343,11 @@ local function WithState(state, fn)
   macroMode = Pick("macroMode", "transfer")
   macroTarget = Pick("macroTarget", nil)
   backpackHandoff = Pick("backpackHandoff", nil)
+  stashedSearch = Pick("stashedSearch", nil)
+  restoreCollapsedKeys = Pick("restoreCollapsedKeys", nil)
+  blizzardListStale = Pick("blizzardListStale", false)
+  pendingSearch = Pick("pendingSearch", nil)
+  promptAfterCombat = Pick("promptAfterCombat", false)
 
   local ok, err = pcall(fn)
 
@@ -2197,6 +2363,11 @@ local function WithState(state, fn)
   macroMode = saved.macroMode
   macroTarget = saved.macroTarget
   backpackHandoff = saved.backpackHandoff
+  stashedSearch = saved.stashedSearch
+  restoreCollapsedKeys = saved.restoreCollapsedKeys
+  blizzardListStale = saved.blizzardListStale
+  pendingSearch = saved.pendingSearch
+  promptAfterCombat = saved.promptAfterCombat
   if not ok then error(err, 0) end
 end
 
@@ -2217,6 +2388,10 @@ Search._test = {
   OnTokenFrameHidden = OnTokenFrameHidden,
   OnPopupShown = OnPopupShown,
   OnPopupHidden = OnPopupHidden,
+  OnTokenFrameShown = OnTokenFrameShown,
+  OnCombatEndedForPrompt = OnCombatEndedForPrompt,
+  OpenPrompt = function() return openPrompt end,
+  CURRENCY_TAB_MACRO = CURRENCY_TAB_MACRO,
   -- The swapped state as a fn inside WithState sees it
   GetState = function()
     return {
@@ -2226,6 +2401,8 @@ Search._test = {
       macroInFlight = macroInFlight,
       macroMode = macroMode,
       backpackHandoff = backpackHandoff,
+      pendingSearch = pendingSearch,
+      promptAfterCombat = promptAfterCombat,
     }
   end,
 }
