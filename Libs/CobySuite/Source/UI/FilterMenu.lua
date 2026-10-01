@@ -5,8 +5,8 @@
 -- the objective tracker's funnel icon (ObjectiveTrackerContainerFilterButtonTemplate,
 -- 18x19) opens a small menu of checkbox rows drawn with the atlases of
 -- Blizzard's MenuStyle1, so it matches a Blizzard dropdown beside it. While
--- any filter is on the funnel carries Blizzard's red reset x, which clears
--- them all. The menu closes on a click anywhere outside it.
+-- any filter is on the funnel carries Blizzard's red reset x, which calls
+-- onClear to clear them. The menu closes on a click anywhere outside it.
 --
 -- Blizzard's Menu system (DropdownButton:SetupMenu, MenuUtil) is
 -- deliberately not used: its pooled menu frames are shared with every menu
@@ -25,8 +25,10 @@
 --     isChecked  = function(key) return filters[key] == true end,
 --     setChecked = function(key, on) ... end,  -- apply the change
 --     onClear    = function() ... end,         -- the reset x
+--     clearTooltip = "Clear filters",          -- the reset x's tooltip; default "Clear filters"
 --     tooltipTitle = FILTER,                   -- default FILTER
 --     tooltipIdle  = "Narrow the list.",       -- shown when nothing is on
+--     scale = 2,                               -- optional; the badge is 18x19 at scale 1
 --     menu = { name = "MyAddonFilterMenu", parent = parent, strata = "DIALOG" },
 --   })
 --   funnel:Refresh()        -- after filters change elsewhere
@@ -83,6 +85,7 @@ end
 --     glyphTint = { 1, 0.82, 0.1 }, scale = 2,           -- optional; the badge is 18x19 at scale 1
 --     height = 24,                                       -- or size it to a neighbour's height
 --     tooltip = "Settings", onClick = function() ... end,
+--     tooltipAnchor = "ANCHOR_RIGHT",                    -- default ANCHOR_RIGHT
 --   })
 ---------------------------------------------------------------------------
 local GLYPH_TINT = { 1, 0.82, 0.1 }
@@ -257,8 +260,8 @@ function UI.CreateFilterButton(parent, opts)
     return false
   end
 
-  -- Blizzard's reset x (UIResetButtonTemplate), scaled down to sit inside
-  -- the badge's top-right corner.
+  -- Blizzard's reset x (UIResetButtonTemplate), sized down and set
+  -- RESET_OFFSET past the badge's top-right corner, so it sits on the frame.
   local reset = CreateFrame("Button", nil, button, "UIResetButtonTemplate")
   reset:SetSize(RESET_SIZE, RESET_SIZE)
   reset:SetPoint("TOPRIGHT", button, "TOPRIGHT", RESET_OFFSET, RESET_OFFSET)
@@ -328,6 +331,8 @@ end
 --     sound   = false,                          -- skip the click sound
 --     scale   = 2,                              -- the badge is 18x19 at scale 1
 --     height  = 24,                             -- or size it to a neighbour's height
+--     glyphTint = { 1, 0.82, 0.1 },             -- default the funnel's gold
+--     tooltipAnchor = "ANCHOR_RIGHT",           -- default ANCHOR_RIGHT
 --   })
 ---------------------------------------------------------------------------
 local SETTINGS_GLYPH_ATLAS = "GM-icon-settings"

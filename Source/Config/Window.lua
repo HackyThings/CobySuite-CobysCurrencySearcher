@@ -1,11 +1,14 @@
 -------------------------------------------------------------------------------
 -- CobysCurrencySearcher Settings Window
 --
--- The suite's standard settings window (CobySuite.UI.CreateSettingsWindow):
--- a sidebar with Search, Favorites and Filters, staged edits that Apply
--- writes through Config.Set, Cancel, and Defaults. Built at load, so opening
--- it never creates frames in combat; the controls are painted from config on
--- every show, and a ConfigChanged event repaints an open window.
+-- The suite's standard settings window (CobySuite.UI.CreateSettingsWindow),
+-- as Recollect's: a sidebar with Search, Favorites and Filters, a Guide
+-- button beside Defaults, staged edits that Apply writes through Config.Set,
+-- Cancel, and Defaults. Built at load, so opening it never creates frames in
+-- combat; the controls are painted from config on every show, and a
+-- ConfigChanged event repaints an open window. The addon is also listed
+-- under Options > AddOns with a button that opens this window
+-- (CobySuite.UI.RegisterSettingsCategory).
 -- saved_filters has no control, so Defaults (which stages only the settings
 -- the window shows) never touches it.
 -------------------------------------------------------------------------------
@@ -28,6 +31,7 @@ local STAR_MODES = {
 local window = UI.CreateSettingsWindow({
   name    = "CobysCurrencySearcherOptionsWindow",
   title   = U.WrapColor(CobysCurrencySearcher.BRAND_COLOR, "Coby's Currency Searcher") .. " Settings",
+  icon    = CobysCurrencySearcher.ICON,
   config  = Config,
   width   = WINDOW_W,
   height  = WINDOW_H,
@@ -37,6 +41,13 @@ local window = UI.CreateSettingsWindow({
   },
   watch   = { bus = CobysCurrencySearcher.EventBus, event = CobysCurrencySearcher.Events.ConfigChanged },
   message = function(text) CobysCurrencySearcher.Utilities.Message(text) end,
+  footerButtons = {
+    {
+      text = "Guide", width = 80,
+      tooltip = "Open the feature guide: searching, filters, favorites and what a result's click does.",
+      onClick = function() if CobysCurrencySearcher.Guide then CobysCurrencySearcher.Guide.Toggle() end end,
+    },
+  },
   categories = {
     {
       key = "search", label = "Search",
@@ -102,3 +113,24 @@ local window = UI.CreateSettingsWindow({
 function Config.ToggleSettings()
   window:Toggle()
 end
+
+function Config.OpenSettings()
+  window:Open()
+end
+
+-------------------------------------------------------------------------------
+-- Options > AddOns entry (registered once this addon has finished loading)
+-------------------------------------------------------------------------------
+EventUtil.ContinueOnAddOnLoaded("CobysCurrencySearcher", function()
+  UI.RegisterSettingsCategory({
+    name        = "Coby's Currency Searcher",
+    brandColor  = CobysCurrencySearcher.BRAND_COLOR,
+    version     = CobysCurrencySearcher.VERSION,
+    description = {
+      "Adds a search box to the Currency tab. Finds currencies inside collapsed headers and filters the list without gaps.",
+      "The settings live in the addon's own settings window.",
+    },
+    slash       = "/ccs settings",
+    onOpen      = Config.OpenSettings,
+  })
+end)

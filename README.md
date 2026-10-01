@@ -33,6 +33,10 @@ Edge cases it handles:
 - **Account-wide view still loading.** If Blizzard is still fetching account currency data when you type, the results fill in the moment the data arrives.
 - **Logging in during combat.** Addons cannot build frames in combat, so the search box is added the moment combat ends. Nothing to do on your end.
 
+## Guide and What's New
+
+New to the addon? `/ccs guide` opens a short feature guide, one section at a time, starting with the basics. It opens by itself the first time you log in with the addon, and the settings window's Guide button opens it too. After an update, a What's New window lists what changed since the version you last ran; `/ccs changelog` opens it any time.
+
 ## Install
 
 **CurseForge:** https://www.curseforge.com/wow/addons/currency-searcher
@@ -43,19 +47,21 @@ Edge cases it handles:
 
 ```
 /ccs <text>       Search the Currency tab for <text> (asks for one click if the window is on another tab)
-/ccs settings     Open or close the settings window (also /ccs config, /ccs show)
+/ccs settings     Open or close the settings window (also /ccs config, /ccs options, /ccs show)
+/ccs guide        Open or close the feature guide (also /ccs tutorial)
+/ccs changelog    What changed in each version (also /ccs whatsnew, /ccs news, /ccs change)
 /ccs debug        Toggle the debug log window
 /ccs version      Print the addon version
 /ccs help         Command list
 ```
 
-`/cobyscurrencysearcher` works the same as `/ccs`, and `/ccs` on its own prints the command list.
+`/cobyscurrencysearcher` works the same as `/ccs`, and `/ccs` on its own prints the command list. The command words above are never searched for: to find a currency named like one of them, type it in the search box on the Currency tab.
 
 `/ccs <text>` searches straight away when the Currency tab is showing, or when the character window was last left on it. Otherwise a small window asks you to click Go to Currency, and your search runs as soon as the tab opens: the game only lets your own click change that tab without later blocking actions on it, such as warband transfers. In combat, `/ccs` waits and asks once combat ends.
 
 ## Settings
 
-Open with `/ccs settings` or the gear icon beside the funnel. The settings are grouped into categories on the left. Changes take effect when you press Apply; Cancel or closing the window throws them away. Defaults asks first, then fills in every default, and nothing changes until you press Apply. Drag the window's bottom-right corner to make it bigger; it keeps that size.
+Open with `/ccs settings`, the gear icon beside the funnel, or Options > AddOns > Coby's Currency Searcher. The settings are grouped into categories on the left. Changes take effect when you press Apply; Cancel or closing the window throws them away. Defaults asks first, then fills in every default, and nothing changes until you press Apply. Drag the window's bottom-right corner to make it bigger; it keeps that size.
 
 **Search**
 - Match descriptions too (default off. Also matches the search text against each currency's description, not only its name. Handy when you remember what a currency buys but not what it is called.)

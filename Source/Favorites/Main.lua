@@ -1,7 +1,8 @@
 -------------------------------------------------------------------------------
 -- CobysCurrencySearcher Favorites
 --
--- The currencies the user starred on result rows. Stored account-wide in
+-- The currencies the user starred, on any currency row (Blizzard's list or
+-- the search results). Stored account-wide in
 -- COBYS_CURRENCY_SEARCHER_FAVORITES as { [currencyID] = true }. A favorite
 -- never changes the order of anything: the Favorites filter only narrows
 -- the list to starred currencies.

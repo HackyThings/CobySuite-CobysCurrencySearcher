@@ -37,8 +37,8 @@
 --     header is kept only when at least one descendant matches. Collapsing a
 --     header inside the results only hides its rows in the results.
 --   * The filter icon (funnel) beside the box opens a small menu of
---     checkbox filters (Transferable: currencies that can move between the
---     characters of a Warband). A filter narrows the results with or
+--     checkbox filters (FILTER_DEFS: Favorites, Transferable, Owned, Capped,
+--     Weekly, On Backpack). A filter narrows the results with or
 --     without search text; headers then stay only for the rows they still
 --     contain. Filters last for the session and, like the text, are
 --     cleared by the popup's Transfer button and put back once the
@@ -637,8 +637,9 @@ local function RefreshRowHighlights()
   end)
 end
 
--- A plain click opens our options popup and the results stay; only the
--- popup's Transfer button ever leaves for Blizzard's list.
+-- A plain click opens our options popup and the results stay. Only the
+-- secure clickers reach Blizzard's list: the popup's Transfer button, and
+-- out of combat the Show on Backpack clickers, through their tab switch.
 local function OnEntryClick(self)
   local data = self.elementData
   local linkedToChat = false
@@ -757,9 +758,6 @@ local function CreateStar(button)
   accountIcon:HookScript("OnLeave", function() OnRowLeave(button) end)
 end
 
--- Post-hook on TokenEntryMixin:Initialize: runs for Blizzard's rows and
--- ours after Blizzard's own initializer. No frame is created in combat
--- (root rule); the next initialization out of combat catches up.
 -- A backpack toggle from our popup is mirrored onto the row's check texture
 -- until Blizzard's next rebuild (see SetWatched).
 local function ApplyWatchedOverride(row)
@@ -770,6 +768,9 @@ local function ApplyWatchedOverride(row)
   end
 end
 
+-- Post-hook on TokenEntryMixin:Initialize: runs for Blizzard's rows and
+-- ours after Blizzard's own initializer. No frame is created in combat
+-- (root rule); the next initialization out of combat catches up.
 local function OnEntryInitialized(row)
   if not stars[row] and not InCombatLockdown() then
     CreateStar(row)
@@ -892,20 +893,12 @@ refreshQuantities = U.Coalesce(DEBOUNCE_SECONDS, function()
   end
 end)
 
--- The attributes every secure clicker here shares (the Transfer clicker's
--- configuration, verified in game): the macro runs once, on release,
--- whatever the ActionButtonUseKeyDown CVar says. blockModified makes
--- shift, ctrl and alt clicks run nothing.
+-- Every secure clicker here is configured by CobySuite.UI.ConfigureSecureClicker
+-- (the Transfer clicker's configuration, verified in game): the macro runs
+-- once, on release, whatever the ActionButtonUseKeyDown CVar says;
+-- blockModified makes shift, ctrl and alt clicks run nothing.
 local function SetMacroClickerAttributes(clicker, macrotext, blockModified)
-  clicker:RegisterForClicks("LeftButtonUp")
-  clicker:SetAttribute("useOnKeyDown", false)
-  clicker:SetAttribute("type", "macro")
-  clicker:SetAttribute("macrotext", macrotext)
-  if blockModified then
-    clicker:SetAttribute("shift-type*", "")
-    clicker:SetAttribute("ctrl-type*", "")
-    clicker:SetAttribute("alt-type*", "")
-  end
+  UI.ConfigureSecureClicker(clicker, { type = "macro", macrotext = macrotext, blockModified = blockModified })
 end
 
 -- The watch clicker: one insecure action button, shown over the hovered
@@ -1181,12 +1174,14 @@ local function NumWatchedTokens(maxWatched)
   return n
 end
 
--- Test seams (Search._test.seams): every call the Show on Backpack paths,
--- the transfer delegates and /ccs (Search.OpenAndSearch) make that reaches
--- the game or Blizzard's frames, read at call time so the SearchSuite can
--- stand in for them (MockHarness OverrideField) without changing a real
--- currency, showing an error or running the macro's effects. Production
--- code always goes through them.
+-- Test seams (Search._test.seams): the calls the Show on Backpack paths,
+-- the transfer delegates and /ccs (Search.OpenAndSearch) make into the game
+-- or Blizzard's frames, read at call time so the SearchSuite can stand in
+-- for them (Tests.Override) without changing a real currency, showing an
+-- error or running the macro's effects. Production code always goes
+-- through them. Not covered: the watch clicker's chat-link branch
+-- (HandleModifiedItemClick) and the row click it hands to OnEntryClick,
+-- which call the game directly, so the suite keeps out of those branches.
 seams = {
   InCombat = function() return InCombatLockdown() end,
   IsModifiedClick = function(action) return IsModifiedClick(action) end,
@@ -1551,7 +1546,9 @@ end
 -- aims at the popup's transfer toggle once the popup is open for the
 -- target. Blizzard's transfer menu opens with clean data, and the transfer
 -- works from it. The row step was verified in-game on 2026-09-08, the
--- toggle step on 2026-09-09.
+-- toggle step on 2026-09-09, and a whole transfer from a search result again
+-- on 2026-09-30 with the clickers on CobySuite.UI.ConfigureSecureClicker
+-- and CreateClickDelegate.
 --
 -- Before the macro, PreClick stashes the search (text, filters and the
 -- results' scroll position), clears it, records the user's collapse state
@@ -1622,7 +1619,8 @@ local function StashSearch()
 end
 
 -- Puts the stashed search back over Blizzard's list. A no-op once the tab
--- is hidden: its OnHide clears the search anyway, and the stash with it.
+-- is hidden: its OnHide drops the stash (and clears the text unless the
+-- keep-text option is on).
 local function RestoreSearch()
   local stash = stashedSearch
   stashedSearch = nil
@@ -1804,8 +1802,8 @@ end
 -- a click that must not run the macro sets the clicker's type to "" for that
 -- click, and PostClick always puts "macro" back. At the watch cap SetWatched
 -- shows Blizzard's error once and nothing else happens. In combat the
--- insecure template refuses, so PreClick keeps today's path: the mirrored
--- check and a results refresh. Player-visible costs: the character tab
+-- insecure template refuses, so PreClick takes the path the hand-off
+-- replaced out of combat: the mirrored check and a results refresh. Player-visible costs: the character tab
 -- sound plays twice per toggle, and an open transfer menu closes (the tab's
 -- OnHide closes it).
 --
@@ -1964,7 +1962,8 @@ end
 --
 -- CobySuite.UI.CreateSearchBox: Blizzard's SearchBoxTemplate as a live,
 -- debounced filter. An empty box applies at once, so it always means "no
--- search", including programmatic clears (clear button, OnHide).
+-- search text", including programmatic clears (clear button, OnHide); a
+-- filter that is on keeps the results overlay up (IsSearchActive).
 -------------------------------------------------------------------------------
 local function BuildSearchBox()
   return UI.CreateSearchBox(TokenFrame, {
@@ -2035,7 +2034,7 @@ end
 --   TokenFrame shows. The text waits in pendingSearch and is filled in a
 --   frame after TokenFrame shows, by that click or the player's own.
 -- A slash command can't make the secure click itself, hence the one click
--- (Cobanyte, 2026-09-28).
+-- (Cobanyte, 2026-09-28). The prompt's click worked in game on 2026-09-30.
 -------------------------------------------------------------------------------
 local function PromptBody(text)
   local what = (text and text ~= "") and ('your search for "' .. text .. '" runs there') or "the Currency tab opens"
@@ -2137,9 +2136,10 @@ local function Setup()
 
   if not Favorites then
     -- Only ever seen in development, when Favorites/Main.lua has not loaded
-    -- (missing from the TOC or failed to load).
-    Debug.Warn("INIT", "Favorites module missing; the TOC was not re-read. Log out and back in")
-    Utilities.Message("The Favorites module did not load. Log out to the character screen and back in.")
+    -- (missing from the TOC or failed to load). A /reload re-reads the TOC
+    -- (since The War Within 11.0), so it is the first thing to try.
+    Debug.Warn("INIT", "Favorites module missing; check the TOC and any earlier Lua error, then /reload")
+    Utilities.Message("The Favorites module did not load. Type /reload; if it still fails, reinstall the addon.")
   end
 
   BuildOverlay()
@@ -2150,20 +2150,10 @@ local function Setup()
   openPrompt = BuildOpenPrompt()
 
   -- The /click delegates of TRANSFER_MACRO (see "Secure transfer hand-off").
-  -- Created once each: GetClickFrame caches the first object registered
-  -- under a name.
-  local function CreateDelegate(name)
-    local delegate = CreateFrame("Button", name, UIParent, "InsecureActionButtonTemplate")
-    delegate:SetSize(1, 1)
-    delegate:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0)
-    delegate:SetAlpha(0)
-    delegate:RegisterForClicks("LeftButtonUp")
-    delegate:SetAttribute("useOnKeyDown", false)
-    delegate:SetAttribute("type", "click")
-    return delegate
-  end
-  clickStep = CreateDelegate("CobysCurrencySearcherClickStep")
-  transferStep = CreateDelegate("CobysCurrencySearcherTransferStep")
+  -- Created once each (Setup returns early once searchBox exists):
+  -- GetClickFrame caches the first object registered under a name.
+  clickStep = UI.CreateClickDelegate("CobysCurrencySearcherClickStep")
+  transferStep = UI.CreateClickDelegate("CobysCurrencySearcherTransferStep")
 
   -- Hook the frame instance: the mixin methods are copied onto the frame,
   -- and every internal call goes through TokenFrame:Update(). The hook only

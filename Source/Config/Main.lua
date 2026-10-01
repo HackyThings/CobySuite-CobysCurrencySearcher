@@ -14,7 +14,7 @@ local base = CobySuite_CobysCurrencySearcher.Config.New({
     STAR_MODE          = "star_mode",         -- "always" | "results" | "hover"
     STAR_KEEP_FAVORITES = "star_keep_favorites",  -- hover mode: starred currencies keep their star without hovering
     FILTERS_PERSIST    = "filters_persist",   -- keep the filter set across logins
-    SAVED_FILTERS      = "saved_filters",     -- { [filterKey] = true }, written only while FILTERS_PERSIST is on
+    SAVED_FILTERS      = "saved_filters",     -- { [filterKey] = true }, non-empty only while FILTERS_PERSIST is on (emptied when it turns off)
   },
   defaults = {
     ["match_descriptions"] = false,
