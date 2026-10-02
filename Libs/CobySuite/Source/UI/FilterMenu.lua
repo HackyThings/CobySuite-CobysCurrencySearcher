@@ -40,6 +40,7 @@
 -- that follow it, never checked, clicked or counted as a filter.
 ---------------------------------------------------------------------------
 local UI = CobySuite_CobysCurrencySearcher.UI
+local U = CobySuite_CobysCurrencySearcher.Utilities
 
 local BUTTON_WIDTH = 18
 local BUTTON_HEIGHT = 19
@@ -146,7 +147,7 @@ end
 
 -- A group title: gold, not clickable, over the rows that follow it
 local function BuildTitle(menu, def, x, y)
-  local title = menu:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  local title = menu:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
   title:SetPoint("TOPLEFT", x, -y)
   title:SetHeight(MENU_HEADER_HEIGHT)
   title:SetJustifyH("LEFT")
@@ -177,7 +178,7 @@ local function BuildCheckRow(menu, def, inset, y, onClick)
   check:Hide()
   row.Check = check
 
-  local text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  local text = row:CreateFontString(nil, "OVERLAY", U.Fonts.BODY)
   text:SetPoint("LEFT", box, "RIGHT", 7, 1)
   text:SetHeight(MENU_ROW_HEIGHT)
   text:SetText(def.label)
@@ -291,9 +292,10 @@ function UI.CreateFilterButton(parent, opts)
     self:Refresh()
   end
 
-  button:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip_SetTitle(GameTooltip, opts.tooltipTitle or FILTER or "Filter")
+  -- the builder writes only to the tooltip it is handed, so the Verify
+  -- tooltip grid can render it too (fillable)
+  UI.AddDynamicTooltip(button, function(tip)
+    GameTooltip_SetTitle(tip, opts.tooltipTitle or FILTER or "Filter")
     local active = {}
     for _, def in ipairs(opts.defs) do
       if not IsHeader(def) and opts.isChecked(def.key) then
@@ -301,13 +303,11 @@ function UI.CreateFilterButton(parent, opts)
       end
     end
     if #active > 0 then
-      GameTooltip_AddNormalLine(GameTooltip, "On: " .. table.concat(active, ", "))
+      GameTooltip_AddNormalLine(tip, "On: " .. table.concat(active, ", "))
     elseif opts.tooltipIdle then
-      GameTooltip_AddNormalLine(GameTooltip, opts.tooltipIdle)
+      GameTooltip_AddNormalLine(tip, opts.tooltipIdle)
     end
-    GameTooltip:Show()
-  end)
-  button:SetScript("OnLeave", GameTooltip_Hide)
+  end, { fillable = true })
   button:SetScript("OnClick", function(self) self:ToggleMenu() end)
 
   button.Menu = BuildMenu(button, opts)

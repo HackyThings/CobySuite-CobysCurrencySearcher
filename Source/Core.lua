@@ -7,12 +7,16 @@ CobysCurrencySearcher = {
 
 CobysCurrencySearcher.BRAND_COLOR = "F2C94C"
 CobysCurrencySearcher.ICON = "Interface\\Icons\\INV_Misc_Coin_01"   -- the TOC's IconTexture
+-- the group name after a flat result's name (the results and the settings' example)
+CobysCurrencySearcher.FLAT_GROUP_COLOR = CobySuite_CobysCurrencySearcher.Utilities.ColorToHex(CobySuite_CobysCurrencySearcher.Utilities.Colors.DISABLED_GRAY)
 
 -------------------------------------------------------------------------------
 -- EventBus event constants
 -------------------------------------------------------------------------------
 CobysCurrencySearcher.Events = {
   ConfigChanged = "cobys_currency_searcher_config_changed",
+  -- payload: the currency starred or unstarred, nil when every star changed
+  FavoritesChanged = "cobys_currency_searcher_favorites_changed",
 }
 
 -------------------------------------------------------------------------------
@@ -77,6 +81,33 @@ CobySuite_CobysCurrencySearcher.Slash.Register({
     end
   end,
 })
+
+-------------------------------------------------------------------------------
+-- Addon compartment (the addon list on the minimap): the shared launcher's
+-- compartment half only, no minimap button and no LibDataBroker object. A
+-- click opens the settings, as /ccs alone does (the addon has no window of
+-- its own, and opening the Currency tab takes the player's own click on Go
+-- to Currency). The global functions named in the TOC route to it.
+-------------------------------------------------------------------------------
+local launcher = CobySuite_CobysCurrencySearcher.UI.CreateLauncher({
+  name = ADDON_NAME,
+  minimapButton = false,
+  broker = false,
+  onLeftClick = ToggleSettings,
+  onRightClick = ToggleSettings,
+  compartmentTooltipAnchor = "ANCHOR_LEFT",
+  tooltip = function()
+    return CobySuite_CobysCurrencySearcher.UI.LauncherTooltip({
+      title = "Coby's Currency Searcher", brandColor = CobysCurrencySearcher.BRAND_COLOR,
+      icon = CobysCurrencySearcher.ICON, leftClick = "Open settings",
+    })
+  end,
+})
+CobysCurrencySearcher.Launcher = launcher
+
+function CobysCurrencySearcher_OnAddonCompartmentClick(_, button) launcher:OnCompartmentClick(button) end
+function CobysCurrencySearcher_OnAddonCompartmentEnter(_, menuItem) launcher:OnCompartmentEnter(menuItem) end
+function CobysCurrencySearcher_OnAddonCompartmentLeave() launcher:OnCompartmentLeave() end
 
 -------------------------------------------------------------------------------
 -- Startup sequence

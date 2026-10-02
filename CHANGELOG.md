@@ -4,6 +4,26 @@ All notable changes to Coby's Currency Searcher are documented here. Format foll
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-10-01
+
+### Added
+
+- **In the minimap's addon list.** Click Coby's Currency Searcher there to open the settings.
+
+- **Clear all favorites.** The settings' Favorites page counts your favorites and can remove them all at once, on every character, after asking. Cancel and Defaults don't bring them back.
+
+### Changed
+
+- **A new look for the settings.** The pages are now Results, Favorites and Search box, with picture tiles for the two layouts and the three places stars can show, and a short line under every option. Your settings carry over.
+
+- The Go to Currency window has larger text and says the click is usually needed only once: `/ccs <text>` then opens straight to Currency until the window is left on another tab or you reload.
+
+### Fixed
+
+- Go to Currency could open the Currency tab without your search, mostly right after a login or reload.
+
+- Clicking Transfer with two modifier keys held (Ctrl and Shift, for example) could switch tabs and clear your search. It now does nothing, as with one key.
+
 ## [1.0.4] - 2026-10-01
 
 ### Added
@@ -81,7 +101,8 @@ Initial release of Coby's Currency Searcher.
 - "Match descriptions too" option to search description text as well as names.
 - `/ccs <text>` searches the Currency tab for the text, or arms the search until you open the tab; `/ccs settings`, `/ccs debug`, `/ccs version`, `/ccs help`.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.5
 [1.0.4]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.4
 [1.0.3]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.3
 [1.0.2]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.2

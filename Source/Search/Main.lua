@@ -105,7 +105,7 @@ local MAX_LETTERS = 50
 local STAR_HEIGHT = 16
 local STAR_LEFT_X = 4             -- star at the row's left edge
 local ACCOUNT_ICON_GAP = 0        -- between the star and the account-wide icon's frame
-local FLAT_GROUP_COLOR = "808080" -- the group name after a flat result's name
+local FLAT_GROUP_COLOR = CobysCurrencySearcher.FLAT_GROUP_COLOR
 local EMPTY_LABEL_WIDTH = 240
 
 -- Each filter keeps a currency row only when test(row) is true. Headers then
@@ -132,7 +132,7 @@ local FILTER_DEFS = {
   {
     key = "capped",
     label = "Capped",
-    tooltip = "Only currencies at their maximum, or at this week's cap.",
+    tooltip = "Only currencies at their maximum or earning limit.",
     test = function(data)
       local max = data.maxQuantity or 0
       if max > 0 then
@@ -186,8 +186,6 @@ local BACKPACK_MACRO = "/click CharacterFrameTab1\n/click CharacterFrameTab3"
 -- /ccs's one-click prompt (see "Opening the Currency tab from /ccs"): the
 -- character window's own Currency tab, clicked on the secure path.
 local CURRENCY_TAB_MACRO = "/click CharacterFrameTab3"
-local PROMPT_WIDTH, PROMPT_HEIGHT, PROMPT_PAD = 400, 150, 16
-local PROMPT_ICON = "Interface\\Icons\\INV_Misc_Coin_01"   -- the TOC's IconTexture
 
 local searchBox
 local emptyLabel
@@ -228,6 +226,19 @@ local restoreCollapsedKeys -- collapse state to put back on tab hide (nil = noth
 local openPrompt           -- /ccs's "Go to Currency" window; built in Setup
 local pendingSearch        -- /ccs text waiting for the Currency tab to show (nil = none)
 local promptAfterCombat = false  -- /ccs asked in combat: show the prompt once it ends
+local promptClicking = false     -- Go to Currency's click is running (PreClick to PostClick)
+local promptKeepingText = false  -- HidePrompt(true) is closing the prompt with the text kept
+local previewSettings      -- a Verify scene's preview (Search._test.BeginPreview): option key -> value shown
+                           -- without being saved; nil outside a preview. Memory only.
+local previewSaved         -- what BeginPreview swapped out, for EndPreview
+
+-- An option as the search shows it: a preview's value while a Verify scene
+-- shows one (never saved), else the saved setting
+local function Setting(key)
+  local value = previewSettings and previewSettings[key]
+  if value ~= nil then return value end
+  return Config.Get(key)
+end
 
 -------------------------------------------------------------------------------
 -- Header path keys
@@ -514,7 +525,7 @@ local function BuildResults(rows, needle, matchDescriptions)
   end
 
   local results = {}
-  local flat = Config.Get(Config.Options.FLAT_RESULTS)   -- currencies only, no headers
+  local flat = Setting(Config.Options.FLAT_RESULTS)   -- currencies only, no headers
   local hiddenBelow   -- depth of the nearest results-collapsed header, or nil
   for _, data in ipairs(rows) do
     local depth = data.currencyListDepth or 0
@@ -577,11 +588,11 @@ local function Refresh()
   end
 
   local rows, expanded = SnapshotCurrencyList()
-  local results, kept = BuildResults(rows, query, Config.Get(Config.Options.MATCH_DESCRIPTIONS))
+  local results, kept = BuildResults(rows, query, Setting(Config.Options.MATCH_DESCRIPTIONS))
   lastResults = results
   resultsBox:SetDataProvider(CreateDataProvider(results), ScrollBoxConstants.RetainScrollPosition)
   if kept == 0 and filters.favorites and Favorites.Count() == 0 then
-    SetEmptyLabelShown(true, "No favorites yet. Click the star at the start of any currency row.")
+    SetEmptyLabelShown(true, "No favorites yet. Clear the filter with the red x, then search and click a star.")
   else
     SetEmptyLabelShown(kept == 0, "No matching currencies")
   end
@@ -608,21 +619,26 @@ local function EntryIsSelected(self)
     and self.elementData ~= nil and self.elementData.currencyID == selectedCurrencyID
 end
 
-local function ShowEntryTooltip(self)
-  local data = self.elementData
-  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-  GameTooltip:SetCurrencyByID(data.currencyID)
+-- A result row's tooltip lines, written into `tip` (GameTooltip on a hover;
+-- a Verify grid tip, which is never GameTooltip, through Search._test)
+local function FillEntryTooltip(tip, data)
+  tip:SetCurrencyByID(data.currencyID)
 
   if data.isAccountTransferable then
     local transferPercentage = data.transferPercentage
     local percentageLost = transferPercentage and (100 - transferPercentage) or 0
     if percentageLost > 0 then
-      GameTooltip_AddNormalLine(GameTooltip, CURRENCY_TRANSFER_LOSS:format(math.ceil(percentageLost)))
+      GameTooltip_AddNormalLine(tip, CURRENCY_TRANSFER_LOSS:format(math.ceil(percentageLost)))
     end
   end
 
-  GameTooltip_AddBlankLineToTooltip(GameTooltip)
-  GameTooltip_AddInstructionLine(GameTooltip, CURRENCY_BUTTON_TOOLTIP_CLICK_INSTRUCTION)
+  GameTooltip_AddBlankLineToTooltip(tip)
+  GameTooltip_AddInstructionLine(tip, CURRENCY_BUTTON_TOOLTIP_CLICK_INSTRUCTION)
+end
+
+local function ShowEntryTooltip(self)
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  FillEntryTooltip(GameTooltip, self.elementData)
   GameTooltip:Show()
 end
 
@@ -683,13 +699,13 @@ end
 -- star mode option decides whether it shows: on every row, on our result
 -- rows only, or only on the row under the mouse.
 local function StarShown(button)
-  local mode = Config.Get(Config.Options.STAR_MODE)
+  local mode = Setting(Config.Options.STAR_MODE)
   if mode == "results" then return resultRows[button] == true end
   if mode == "hover" then
     if hoveredRow == button then return true end
     -- Starred currencies may keep their star without a hover.
     local data = button.elementData
-    return Config.Get(Config.Options.STAR_KEEP_FAVORITES) == true
+    return Setting(Config.Options.STAR_KEEP_FAVORITES) == true
       and data ~= nil and Favorites ~= nil and Favorites.IsFavorite(data.currencyID)
   end
   return true
@@ -731,10 +747,7 @@ local function CreateStar(button)
     onToggle = function(on)
       local data = button.elementData
       if not data then return end
-      Favorites.Set(data.currencyID, on)
-      if filters.favorites then
-        Refresh()   -- an unstarred row leaves a Favorites-filtered list
-      end
+      Favorites.Set(data.currencyID, on)   -- FavoritesChanged refreshes (Search:ReceiveEvent)
     end,
   })
   stars[button] = star
@@ -853,7 +866,7 @@ local function InitEntry(button, data)
     button:SetScript("OnLeave", OnEntryLeave)
   end
   button:Initialize(data)   -- the mixin hook adds and refreshes the star
-  if data.path and data.path ~= "" and Config.Get(Config.Options.FLAT_RESULTS) then
+  if data.path and data.path ~= "" and Setting(Config.Options.FLAT_RESULTS) then
     -- Flat results carry their group after the name, dimmed.
     button.Content.Name:SetText(data.name .. "  " .. U.WrapColor(FLAT_GROUP_COLOR, data.path))
   end
@@ -998,7 +1011,7 @@ local function BuildOverlay()
   local view = CreateScrollBoxListLinearView()
   view:SetElementIndentCalculator(function(elementData)
     local isTopLevelHeader = elementData.isHeader and elementData.currencyListDepth == 0
-    if isTopLevelHeader or Config.Get(Config.Options.FLAT_RESULTS) then
+    if isTopLevelHeader or Setting(Config.Options.FLAT_RESULTS) then
       return 0
     end
     -- We only slightly indent elements that are immediately under top level headers
@@ -1089,7 +1102,7 @@ local function TransferDisabledMessage(dataReady, failureReason)
   return failureReason and TRANSFER_DISABLED_MESSAGES[failureReason] or nil
 end
 
-local TRANSFER_HANDOFF_TOOLTIP = "Opens the transfer menu for this currency. Your search stays. In combat, only Blizzard's list comes back."
+local TRANSFER_HANDOFF_TOOLTIP = "Opens the transfer menu for this currency, and your search comes back. If the menu can't open, Blizzard's list stays up. In combat, only Blizzard's list comes back."
 
 local function RefreshTransferButton(data)
   local button = popup.TransferButton
@@ -1479,6 +1492,7 @@ end
 -- time; the saved one is never edited in place) and LoadPersistedFilters
 -- puts the set back at the next login.
 local function PersistFilters()
+  if previewSettings then return end   -- a Verify preview's filters are never saved
   if not Config.Get(Config.Options.FILTERS_PERSIST) then return end
   local saved = {}
   for key, on in pairs(filters) do
@@ -1652,8 +1666,8 @@ local function TransferHandoffInCombat(data)
 end
 
 -- Runs before the secure action. Modified clicks and clicks in combat never
--- reach the macro (the modifier attributes are no-ops and the insecure
--- template refuses in combat).
+-- reach the macro (a modified click runs nothing, and the insecure template
+-- refuses in combat).
 OnTransferPreClick = function(clicker)
   local data = FindResult(selectedCurrencyID)
   if not data then
@@ -1663,7 +1677,11 @@ OnTransferPreClick = function(clicker)
     return
   end
   if IsShiftKeyDown() or IsControlKeyDown() or IsAltKeyDown() then
-    return   -- modified click; the macro is a no-op for it too
+    -- A modified click runs nothing. The modifier attributes block one
+    -- modifier at a time; two together (ctrl-shift-) would fall back to the
+    -- macro, so type is cleared here too. PostClick arms the macro again.
+    clicker:SetAttribute("type", "")
+    return
   end
   if InCombatLockdown() then
     TransferHandoffInCombat(data)
@@ -2037,33 +2055,51 @@ end
 -- (Cobanyte, 2026-09-28). The prompt's click worked in game on 2026-09-30.
 -------------------------------------------------------------------------------
 local function PromptBody(text)
-  local what = (text and text ~= "") and ('your search for "' .. text .. '" runs there') or "the Currency tab opens"
-  return "The character window isn't on its Currency tab. Click Go to Currency and " .. what .. ".\n\n"
-    .. "Addons can't switch that tab for you without the game later blocking actions on it, "
-    .. "such as warband transfers, so it takes your click."
+  local what = (text and text ~= "") and ('search for "' .. text .. '"') or "open the Currency tab"
+  return "Click Go to Currency to " .. what .. ".\n\n"
+    .. "WoW only lets your own click change the character window's tab. Once is usually enough: "
+    .. "/ccs <text> then opens straight to Currency until the window is on another tab or you reload."
 end
 
 -- Hides the prompt; its OnHide drops the waiting text (Cancel, the X,
 -- Escape) unless keepText
 local function HidePrompt(keepText)
   if not (openPrompt and openPrompt:IsShown()) then return end
-  local text = pendingSearch
+  promptKeepingText = keepText and true or false
   openPrompt:Hide()
-  if keepText then pendingSearch = text end
+  promptKeepingText = false
 end
 
 local function ShowPrompt()
   if not openPrompt then return false end
-  openPrompt.Body:SetText(PromptBody(pendingSearch))
-  openPrompt:Show()
+  promptClicking = false   -- a click whose PostClick never came can't keep Cancel from dropping the text
+  -- sized to the text, which a long search makes taller
+  openPrompt:Ask(PromptBody(pendingSearch))
   return true
 end
 
--- A frame after TokenFrame showed: the waiting text goes in the box
-local function ApplyPendingSearch()
+-- After the tab showed: the waiting text goes in the box. A tab not on
+-- screen yet keeps the text and is asked again, APPLY_RETRY apart, up to
+-- APPLY_TRIES times (Task #61, 2026-10-01: the first Go to Currency after a
+-- /reload, with the window closed, opened the tab without the text; the
+-- old code dropped the text when the tab wasn't visible a frame later).
+local APPLY_RETRY, APPLY_TRIES = 0.05, 20
+local function ApplyPendingSearch(tries)
   local text = pendingSearch
-  pendingSearch = nil
-  if text ~= nil and seams.TabVisible() then seams.SetSearchText(text) end
+  if text == nil then return end
+  if seams.TabVisible() then
+    pendingSearch = nil
+    seams.SetSearchText(text)
+    Debug.Log("SEARCH", "/ccs: the Currency tab is open; searching for '%s'", text)
+    return
+  end
+  tries = (tries or 0) + 1
+  if tries >= APPLY_TRIES then
+    pendingSearch = nil
+    Debug.Warn("SEARCH", "/ccs: the Currency tab never came on screen; '%s' dropped", text)
+    return
+  end
+  seams.After(APPLY_RETRY, function() ApplyPendingSearch(tries) end)
 end
 
 -- TokenFrame's OnShow (our hook): with a /ccs text waiting, the prompt goes
@@ -2071,8 +2107,50 @@ end
 -- later, outside the click that showed the tab
 local function OnTokenFrameShown()
   if macroInFlight or pendingSearch == nil then return end
+  Debug.Log("SEARCH", "/ccs: the Currency tab showed (visible: %s); the text follows", tostring(seams.TabVisible()))
   HidePrompt(true)
   seams.After(0, ApplyPendingSearch)
+end
+
+-- Go to Currency's PreClick and PostClick. The click runs the tab's macro
+-- between them. PostClick hands the text over itself when the tab is on
+-- screen, so the search never depends on the OnShow hook alone; a prompt
+-- that closes during the click keeps the text (its OnHide checks
+-- promptClicking).
+local function OnPromptPreClick()
+  promptClicking = true
+end
+
+local function OnPromptPostClick()
+  promptClicking = false
+  -- the insecure template refuses in combat
+  if seams.InCombat() then
+    seams.Message("The Currency tab can't be opened from here in combat; click Go to Currency again once combat ends.")
+    return
+  end
+  local visible = seams.TabVisible()
+  Debug.Log("SEARCH", "/ccs: Go to Currency clicked (tab visible: %s, text waiting: %s)",
+    tostring(visible), tostring(pendingSearch ~= nil))
+  -- a tab not on screen yet is left to the OnShow hook, with the text kept
+  if pendingSearch == nil or not visible then return end
+  HidePrompt(true)
+  seams.After(0, ApplyPendingSearch)
+end
+
+-- The prompt's OnHide: Cancel, the X and Escape drop the waiting text; a
+-- hide during the Go to Currency click, or HidePrompt(true) as the tab
+-- shows, does not
+local function OnPromptHidden()
+  if promptKeepingText then return end
+  if promptClicking then
+    Debug.Log("SEARCH", "/ccs: the prompt closed during the Go to Currency click; the text waits for the tab")
+    return
+  end
+  if pendingSearch ~= nil then
+    Debug.Log("SEARCH", "/ccs: the prompt closed; '%s' dropped", pendingSearch)
+  end
+  pendingSearch = nil
+  promptAfterCombat = false
 end
 
 local function OnCombatEndedForPrompt()
@@ -2084,36 +2162,16 @@ local function OnCombatEndedForPrompt()
 end
 
 local function BuildOpenPrompt()
-  local f = UI.CreateWindow({
-    name = "CobysCurrencySearcherOpenPrompt", title = "Coby's Currency Searcher", icon = PROMPT_ICON,
-    width = PROMPT_WIDTH, height = PROMPT_HEIGHT, strata = "DIALOG", escapeCloses = true,
-    point = { "CENTER", UIParent, "CENTER", 0, 120 },
+  -- the suite's one-click prompt: Go to Currency runs the macro once, on
+  -- release, never modified
+  local prompt = UI.CreateClickPrompt({
+    name = "CobysCurrencySearcherOpenPrompt", title = "Coby's Currency Searcher", icon = CobysCurrencySearcher.ICON,
+    macro = CURRENCY_TAB_MACRO, buttonText = "Go to Currency",
+    onPostClick = OnPromptPostClick,
+    onHide = OnPromptHidden,
   })
-  f.Body = f:CreateFontString(nil, "OVERLAY", U.Fonts.SMALL)
-  f.Body:SetPoint("TOPLEFT", f, "TOPLEFT", PROMPT_PAD, -34)
-  f.Body:SetWidth(PROMPT_WIDTH - 2 * PROMPT_PAD)
-  f.Body:SetJustifyH("LEFT")
-  f.Body:SetWordWrap(true)
-  -- the shared button's look on an insecure action button, configured like
-  -- the Transfer clicker: the macro runs once, on release, never modified
-  f.Go = UI.CreateButton(f, { text = "Go to Currency", size = { 150, U.ButtonSize.MEDIUM.height },
-    point = { "BOTTOMLEFT", f, "BOTTOMLEFT", PROMPT_PAD, 14 }, template = "UIPanelButtonTemplate, InsecureActionButtonTemplate" })
-  SetMacroClickerAttributes(f.Go, CURRENCY_TAB_MACRO, true)
-  f.Go:HookScript("PostClick", function()
-    -- the insecure template refuses in combat
-    if seams.InCombat() then
-      seams.Message("The Currency tab can't be opened from here in combat; click Go to Currency again once combat ends.")
-    end
-  end)
-  UI.CreateButton(f, { text = "Cancel", size = { 110, U.ButtonSize.MEDIUM.height },
-    point = { "BOTTOMRIGHT", f, "BOTTOMRIGHT", -PROMPT_PAD, 14 },
-    onClick = function() f:Hide() end })
-  f:HookScript("OnHide", function()
-    pendingSearch = nil
-    promptAfterCombat = false
-  end)
-  f:Hide()
-  return f
+  prompt.Button:HookScript("PreClick", OnPromptPreClick)
+  return prompt
 end
 
 -------------------------------------------------------------------------------
@@ -2168,7 +2226,9 @@ local function Setup()
     OnTokenFrameShown()
   end)
 
-  CobysCurrencySearcher.EventBus:Register(Search, { CobysCurrencySearcher.Events.ConfigChanged })
+  CobysCurrencySearcher.EventBus:Register(Search, {
+    CobysCurrencySearcher.Events.ConfigChanged, CobysCurrencySearcher.Events.FavoritesChanged,
+  })
   -- Setup runs while Blizzard_TokenUI loads, before this addon's own
   -- SavedVariables exist; the saved search delay and the persisted filters
   -- can only be read after our ADDON_LOADED (immediately when Setup was
@@ -2207,6 +2267,17 @@ EventUtil.ContinueOnAddOnLoaded("Blizzard_TokenUI", InstallStarHook)
 -- EventBus
 -------------------------------------------------------------------------------
 function Search:ReceiveEvent(eventName, optionName)
+  if eventName == CobysCurrencySearcher.Events.FavoritesChanged then
+    -- the payload is the currency, nil when every star changed (Clear all
+    -- favorites): then every star repaints. An unstarred row leaves a
+    -- Favorites-filtered list.
+    local all = optionName == nil
+    if all then RefreshBlizzardStars() end
+    if (all or filters.favorites) and IsSearchActive() and TokenFrame:IsShown() then
+      Refresh()
+    end
+    return
+  end
   if optionName == Config.Options.SAVED_FILTERS then return end   -- our own write
   -- Persistence switched: start saving the current set, or forget the saved one.
   if optionName == nil or optionName == Config.Options.FILTERS_PERSIST then
@@ -2242,6 +2313,23 @@ end
 -- "opened" (the window opened on it through ShowUIPanel), "prompt" (our
 -- window asks for the click), "waiting" (in combat; the prompt shows once
 -- it ends) or "refused".
+--
+-- Search.OpenPath() is its decision alone, acting on nothing: "search",
+-- "disabled", "open", "wait" or "prompt". The prompt's text and the Prompt
+-- suite rest on it: Currency stays the window's tab while the window is
+-- closed (TokenFrame keeps its shown flag), but the Character key, the
+-- menu-bar button and another tab's click put it on another tab, and a
+-- login or /reload starts it on Character (TokenFrame is hidden="true").
+function Search.OpenPath()
+  -- IsVisible, not IsShown: the tab can be shown inside a hidden character
+  -- frame.
+  if seams.TabVisible() then return "search" end
+  if seams.CharacterPanelDisabled() then return "disabled" end
+  if not seams.WindowShown() and seams.TabIsCurrent() then return "open" end
+  if seams.InCombat() then return "wait" end
+  return "prompt"
+end
+
 function Search.OpenAndSearch(text)
   if not searchBox then
     Debug.Warn("SEARCH", "/ccs refused: search box not installed")
@@ -2249,19 +2337,18 @@ function Search.OpenAndSearch(text)
     return "refused"
   end
   text = strtrim(text or "")
-  -- IsVisible, not IsShown: the tab can be shown inside a hidden character
-  -- frame.
-  if seams.TabVisible() then
+  local path = Search.OpenPath()
+  if path == "search" then
     pendingSearch = nil
     seams.SetSearchText(text)
     return "searched"
   end
-  if seams.CharacterPanelDisabled() then
+  if path == "disabled" then
     Debug.Warn("SEARCH", "/ccs refused: the character window is turned off here")
     seams.Message("The Currency tab could not be opened here.")
     return "refused"
   end
-  if not seams.WindowShown() and seams.TabIsCurrent() then
+  if path == "open" then
     seams.ShowWindow()
     if seams.TabVisible() then
       pendingSearch = nil
@@ -2275,7 +2362,7 @@ function Search.OpenAndSearch(text)
   end
   -- Currency isn't the window's tab: one click on the prompt's secure button
   pendingSearch = text
-  if seams.InCombat() then
+  if path == "wait" then
     if not promptAfterCombat then
       promptAfterCombat = true
       seams.AfterCombat(OnCombatEndedForPrompt)
@@ -2304,7 +2391,8 @@ end
 -- watchedOverrides, macroInFlight, macroMode, macroTarget, backpackHandoff,
 -- stashedSearch, restoreCollapsedKeys, blizzardListStale (so a handler
 -- under test never drops the live stash or a pending rebuild of a stale
--- list), pendingSearch and promptAfterCombat (/ccs's waiting text).
+-- list), pendingSearch, promptAfterCombat and promptClicking (/ccs's
+-- waiting text and the prompt's click).
 -------------------------------------------------------------------------------
 local function WithState(state, fn)
   local saved = {
@@ -2316,6 +2404,7 @@ local function WithState(state, fn)
     stashedSearch = stashedSearch, restoreCollapsedKeys = restoreCollapsedKeys,
     blizzardListStale = blizzardListStale,
     pendingSearch = pendingSearch, promptAfterCombat = promptAfterCombat,
+    promptClicking = promptClicking,
   }
   local function Pick(key, default)
     if state[key] ~= nil then return state[key] end
@@ -2338,6 +2427,7 @@ local function WithState(state, fn)
   blizzardListStale = Pick("blizzardListStale", false)
   pendingSearch = Pick("pendingSearch", nil)
   promptAfterCombat = Pick("promptAfterCombat", false)
+  promptClicking = Pick("promptClicking", false)
 
   local ok, err = pcall(fn)
 
@@ -2358,7 +2448,95 @@ local function WithState(state, fn)
   blizzardListStale = saved.blizzardListStale
   pendingSearch = saved.pendingSearch
   promptAfterCombat = saved.promptAfterCombat
+  promptClicking = saved.promptClicking
   if not ok then error(err, 0) end
+end
+
+-------------------------------------------------------------------------------
+-- Preview (Verify scenes, Task #95): BeginPreview(state) shows the results,
+-- stars and filters a scene asks for without writing anything saved: the
+-- search's session state (text, filters, headers collapsed in the results,
+-- results, selection) is swapped for the preview's, the flat, star and match settings read through
+-- previewSettings (Setting), and favorites through Favorites.SetPreview.
+-- PersistFilters writes nothing while a preview is up. EndPreview puts all
+-- of it back and redraws the player's own search. Memory only: a /reload
+-- drops a preview. Nothing here touches Blizzard's list (no
+-- TokenFrame:Update, even with a stale list waiting: that stays for the
+-- player's own next clear).
+--   state: query, filters ({ [key] = true }), flat, starMode,
+--          keepFavorites, matchDescriptions, favorites ({ [currencyID] = true },
+--          or "first": the first currency of the preview's results)
+-------------------------------------------------------------------------------
+local function ShowPreviewResults()
+  if IsSearchActive() then
+    if not overlayActive then
+      overlayActive = true
+      ShowOverlay()
+    end
+    if TokenFrame:IsShown() then
+      Refresh()
+      resultsBox:ScrollToBegin()
+    end
+  elseif overlayActive then
+    overlayActive = false
+    lastResults = nil
+    HideOverlay()
+  end
+  RefreshFilterUI()
+end
+
+local function BeginPreview(state)
+  if previewSaved then return false, "a preview is already up" end
+  if macroInFlight or pendingSearch ~= nil then return false, "a hand-off or a /ccs search is in flight" end
+  state = state or {}
+  if popup and popup:IsShown() then popup:Hide() end
+  previewSaved = {
+    filters = filters, collapsed = collapsedInResults, query = query, lastResults = lastResults,
+    selectedCurrencyID = selectedCurrencyID, text = searchBox and searchBox:GetText() or "",
+  }
+  local O = Config.Options
+  previewSettings = {
+    [O.FLAT_RESULTS] = state.flat, [O.STAR_MODE] = state.starMode,
+    [O.STAR_KEEP_FAVORITES] = state.keepFavorites, [O.MATCH_DESCRIPTIONS] = state.matchDescriptions,
+  }
+  if type(state.favorites) == "table" and Favorites then Favorites.SetPreview(state.favorites) end
+  filters = state.filters or {}
+  collapsedInResults = {}
+  query = strlower(strtrim(state.query or ""))
+  lastResults = nil
+  selectedCurrencyID = nil
+  if searchBox then
+    seams.SetSearchText(state.query or "")   -- its search finds the query already set
+    CancelPendingSearch()
+  end
+  ShowPreviewResults()
+  -- favorites = "first": the first currency of the preview's results starred
+  if state.favorites == "first" and Favorites then
+    for _, row in ipairs(lastResults or {}) do
+      if not row.isHeader and row.currencyID then
+        Favorites.SetPreview({ [row.currencyID] = true })
+        ShowPreviewResults()
+        break
+      end
+    end
+  end
+  return true
+end
+
+local function EndPreview()
+  local saved = previewSaved
+  if not saved then return end
+  if popup and popup:IsShown() then popup:Hide() end
+  previewSaved = nil
+  previewSettings = nil
+  if Favorites then Favorites.SetPreview(nil) end
+  filters, collapsedInResults, query = saved.filters, saved.collapsed, saved.query
+  lastResults, selectedCurrencyID = saved.lastResults, saved.selectedCurrencyID
+  if searchBox then
+    seams.SetSearchText(saved.text)
+    CancelPendingSearch()
+  end
+  ShowPreviewResults()
 end
 
 Search._test = {
@@ -2380,7 +2558,21 @@ Search._test = {
   OnPopupHidden = OnPopupHidden,
   OnTokenFrameShown = OnTokenFrameShown,
   OnCombatEndedForPrompt = OnCombatEndedForPrompt,
+  OnPromptPreClick = OnPromptPreClick,
+  OnPromptPostClick = OnPromptPostClick,
   OpenPrompt = function() return openPrompt end,
+  PromptBody = PromptBody,
+  -- Verify scenes (Task #95)
+  BeginPreview = BeginPreview,
+  EndPreview = EndPreview,
+  IsPreviewing = function() return previewSaved ~= nil end,
+  PreviewResults = function() return lastResults end,
+  ShowPopupFor = function(data) ShowPopupFor(data) end,
+  FillEntryTooltip = FillEntryTooltip,
+  TRANSFER_HANDOFF_TOOLTIP = TRANSFER_HANDOFF_TOOLTIP,
+  Popup = function() return popup end,
+  FilterButton = function() return filterButton end,
+  SettingsButton = function() return settingsButton end,
   CURRENCY_TAB_MACRO = CURRENCY_TAB_MACRO,
   -- The swapped state as a fn inside WithState sees it
   GetState = function()

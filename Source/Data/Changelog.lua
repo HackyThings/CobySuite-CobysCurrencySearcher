@@ -15,6 +15,23 @@ CobysCurrencySearcher.Data = CobysCurrencySearcher.Data or {}
 
 CobysCurrencySearcher.Data.Changelog = {
   {
+    version = "1.0.5",
+    title = "New settings look",
+    date = "2026-10-01",
+    new = {
+      "Minimap addon list: click the addon to open its settings",
+      "Clear all favorites: a button on the Favorites page",
+    },
+    changed = {
+      "Settings: Results, Favorites and Search box pages with picture tiles",
+      "Go to Currency: larger text; {/ccs} then opens straight to Currency",
+    },
+    fixed = {
+      "Go to Currency: the search is kept after a login or reload",
+      "Transfer: clicking with two modifier keys held does nothing",
+    },
+  },
+  {
     version = "1.0.4",
     title = "Guide and What's New",
     date = "2026-10-01",
