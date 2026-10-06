@@ -70,80 +70,7 @@ local function IsHeader(def)
   return def.key == nil and def.header ~= nil
 end
 
----------------------------------------------------------------------------
--- CreateFilterStyleButton: the funnel's badge with another glyph on it
---
--- Blizzard ships the red badge only with its funnel, collapse and expand
--- glyphs. For a sibling button (a settings gear beside the funnel) the
--- badge is the funnel atlas itself: a patch sampled from a plain part of
--- the badge's interior covers the funnel glyph, and the caller's glyph
--- atlas is drawn on top, tinted the funnel's gold. Every pixel of the frame
--- and its shading is Blizzard's, so the pair matches exactly.
---
---   local gear = CobySuite.UI.CreateFilterStyleButton(parent, {
---     name = "MyAddonSettingsButton", point = { ... },
---     glyphAtlas = "GM-icon-settings", glyphInset = -1,   -- negative grows a padded glyph
---     glyphTint = { 1, 0.82, 0.1 }, scale = 2,           -- optional; the badge is 18x19 at scale 1
---     height = 24,                                       -- or size it to a neighbour's height
---     tooltip = "Settings", onClick = function() ... end,
---     tooltipAnchor = "ANCHOR_RIGHT",                    -- default ANCHOR_RIGHT
---   })
----------------------------------------------------------------------------
-local GLYPH_TINT = { 1, 0.82, 0.1 }
-local GLYPH_PUSHED_SHADE = 0.75
-local BADGE_PATCH_INSET = 3                          -- keeps the badge's rounded frame
-local BADGE_PATCH_SAMPLE = { 0.12, 0.22, 0.55, 0.70 } -- plain interior: left of the funnel's stem (u1, u2, v1, v2)
-
-local function CoverGlyph(button, atlasName)
-  local info = C_Texture.GetAtlasInfo(atlasName)
-  if not info then return end
-  local patch = button:CreateTexture(nil, "OVERLAY", nil, 0)
-  patch:SetTexture(info.file)
-  local l, r = info.leftTexCoord, info.rightTexCoord
-  local t, b = info.topTexCoord, info.bottomTexCoord
-  local s = BADGE_PATCH_SAMPLE
-  patch:SetTexCoord(l + (r - l) * s[1], l + (r - l) * s[2], t + (b - t) * s[3], t + (b - t) * s[4])
-  patch:SetPoint("TOPLEFT", BADGE_PATCH_INSET, -BADGE_PATCH_INSET)
-  patch:SetPoint("BOTTOMRIGHT", -BADGE_PATCH_INSET, BADGE_PATCH_INSET)
-end
-
-function UI.CreateFilterStyleButton(parent, opts)
-  assert(opts and opts.glyphAtlas, "CreateFilterStyleButton needs glyphAtlas")
-  local button = CreateFrame("Button", opts.name, parent)
-  button:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
-  -- opts.height sizes the badge to match a neighbour (a close button); opts.scale
-  -- is the raw factor. Either way, anchor offsets are in the scaled space.
-  local scale = opts.scale or (opts.height and opts.height / BUTTON_HEIGHT)
-  if scale then button:SetScale(scale) end
-  if opts.point then button:SetPoint(unpack(opts.point)) end
-  button:SetNormalAtlas(BUTTON_ATLAS.normal)
-  button:SetPushedAtlas(BUTTON_ATLAS.pressed)
-  button:SetHighlightAtlas(BUTTON_ATLAS.highlight, "ADD")
-
-  CoverGlyph(button, BUTTON_ATLAS.normal)
-
-  local inset = opts.glyphInset or 0
-  local glyph = button:CreateTexture(nil, "OVERLAY", nil, 1)
-  glyph:SetAtlas(opts.glyphAtlas)
-  glyph:SetPoint("TOPLEFT", inset, -inset)
-  glyph:SetPoint("BOTTOMRIGHT", -inset, inset)
-  local tint = opts.glyphTint or GLYPH_TINT
-  glyph:SetVertexColor(tint[1], tint[2], tint[3], tint[4] or 1)
-  button.Glyph = glyph
-
-  -- Pressed: the badge swaps to its pressed art; the glyph darkens with it.
-  button:SetScript("OnMouseDown", function()
-    local s = GLYPH_PUSHED_SHADE
-    glyph:SetVertexColor(tint[1] * s, tint[2] * s, tint[3] * s, tint[4] or 1)
-  end)
-  button:SetScript("OnMouseUp", function()
-    glyph:SetVertexColor(tint[1], tint[2], tint[3], tint[4] or 1)
-  end)
-
-  if opts.onClick then button:SetScript("OnClick", opts.onClick) end
-  if opts.tooltip then UI.AddTooltip(button, opts.tooltip, opts.tooltipAnchor or "ANCHOR_RIGHT") end
-  return button
-end
+local GLYPH_TINT = { 1, 0.82, 0.1 }   -- the funnel's gold, for a plate's glyph
 
 -- A group title: gold, not clickable, over the rows that follow it
 local function BuildTitle(menu, def, x, y)
@@ -206,6 +133,12 @@ local function BuildMenu(button, opts)
   bg:SetPoint("TOPLEFT", -10, 3)
   bg:SetPoint("BOTTOMRIGHT", 10, -3)
   bg:SetAlpha(MENU_BG_ALPHA)
+  -- a solid fill under the art, inside its border: the atlas's middle let the
+  -- list behind show through (Currency Searcher's funnel menu, Task #239)
+  local fill = menu:CreateTexture(nil, "BACKGROUND", nil, -1)
+  fill:SetAllPoints(menu)
+  local wbg = CobySuite_CobysCurrencySearcher.Utilities.Colors.WINDOW_BG
+  fill:SetColorTexture(wbg[1], wbg[2], wbg[3], wbg[4])
 
   local function OnRowClick(row)
     local on = not opts.isChecked(row.key)
@@ -316,12 +249,124 @@ function UI.CreateFilterButton(parent, opts)
 end
 
 ---------------------------------------------------------------------------
--- CreateSettingsGearButton: the settings gear that pairs with the funnel
+-- CreateCloseStyleButton: Blizzard's close button plate with another glyph
 --
--- CreateFilterStyleButton with the raid manager's settings glyph
--- (GM-icon-settings, padded for a 40px button, so grown by a pixel), the
--- tooltip "Settings" and the checkbox click sound. Every addon that puts a
--- gear beside a Blizzard list uses this so they all look the same.
+-- The close X (UIPanelCloseButton) is one piece of art per state: a red
+-- plate in a grey bezel with the gold X drawn into it, in the atlases
+-- RedButton-Exit (normal), RedButton-exit-pressed and RedButton-Highlight
+-- (the hover glow, no X). Blizzard ships that plate only with glyphs baked
+-- in, so a sibling button draws the atlas as it is and covers the X with a
+-- patch sampled from the plate's plain top strip. The patch stops short of
+-- the plate's rim (PLATE_COVER_INSET), so the bezel, its corners and the rim
+-- shading stay Blizzard's pixels; the caller's glyph atlas goes on top in
+-- gold with a dark drop shadow, centered like the X. The button is square
+-- and moves its glyph a pixel when pressed, as the X does.
+--
+--   local gear = CobySuite.UI.CreateCloseStyleButton(parent, {
+--     name = "MyAddonSettingsButton", point = { ... },
+--     glyphAtlas = "GM-icon-settings",
+--     glyphTint = { 1, 0.82, 0.1 },     -- default gold
+--     glyphScale = 1.3,                 -- glyph frame / button; the default fits the padded gear
+--     height = 24,                      -- the edge: a neighbouring close button's size; default 19
+--     scale = 1,                        -- optional raw SetScale (anchor offsets scale with it)
+--     tooltip = "Settings", onClick = function() ... end,
+--     tooltipAnchor = "ANCHOR_RIGHT",   -- default ANCHOR_RIGHT
+--   })
+---------------------------------------------------------------------------
+local PLATE_ATLAS = {
+  normal = "RedButton-Exit",
+  pressed = "RedButton-exit-pressed",
+  highlight = "RedButton-Highlight",
+}
+local PLATE_DEFAULT_EDGE = 19          -- beside the 19px funnel; a close button is 24
+local PLATE_REFERENCE_EDGE = 24        -- the close button's size, the unit of the pixel constants below
+local PLATE_COVER_INSET = 0.15         -- of the edge: the X's tips start ~0.19 in, the rim ends ~0.10
+local PLATE_SAMPLE = { 0.40, 0.60, 0.17, 0.22 }   -- plain red above the X's arms (u1, u2, v1, v2 of the atlas)
+local GLYPH_SCALE = 1.3                -- GM-icon-settings is padded for a 40px button (its gear ~40% of the frame); 1.5 looked too big beside the X in game (2026-10-06)
+local GLYPH_PUSH = 1                   -- px (at the reference edge) the glyph shifts when pressed
+local GLYPH_SHADOW = 1                 -- px (at the reference edge) of drop shadow
+local GLYPH_SHADOW_TINT = { 0.25, 0.04, 0.02, 0.85 }
+
+-- A rectangle of the plate atlas's plain red, stretched over its interior
+local function NewPlatePatch(button, atlasName, inset)
+  local info = C_Texture.GetAtlasInfo(atlasName)
+  if not info then return nil end
+  local patch = button:CreateTexture(nil, "OVERLAY", nil, 0)
+  patch:SetTexture(info.file)
+  local l, r = info.leftTexCoord, info.rightTexCoord
+  local t, b = info.topTexCoord, info.bottomTexCoord
+  local s = PLATE_SAMPLE
+  patch:SetTexCoord(l + (r - l) * s[1], l + (r - l) * s[2], t + (b - t) * s[3], t + (b - t) * s[4])
+  patch:SetPoint("TOPLEFT", inset, -inset)
+  patch:SetPoint("BOTTOMRIGHT", -inset, inset)
+  return patch
+end
+
+function UI.CreateCloseStyleButton(parent, opts)
+  assert(opts and opts.glyphAtlas, "CreateCloseStyleButton needs glyphAtlas")
+  local button = CreateFrame("Button", opts.name, parent)
+  local edge = opts.height or PLATE_DEFAULT_EDGE
+  button:SetSize(edge, edge)
+  if opts.scale then button:SetScale(opts.scale) end
+  if opts.point then button:SetPoint(unpack(opts.point)) end
+  button:SetNormalAtlas(PLATE_ATLAS.normal)
+  button:SetPushedAtlas(PLATE_ATLAS.pressed)
+  button:SetHighlightAtlas(PLATE_ATLAS.highlight, "ADD")
+
+  local inset = edge * PLATE_COVER_INSET
+  local normalPatch = NewPlatePatch(button, PLATE_ATLAS.normal, inset)
+  local pressedPatch = NewPlatePatch(button, PLATE_ATLAS.pressed, inset)
+  if pressedPatch then pressedPatch:Hide() end
+
+  local unit = edge / PLATE_REFERENCE_EDGE
+  local glyphEdge = edge * (opts.glyphScale or GLYPH_SCALE)
+  local tint = opts.glyphTint or GLYPH_TINT
+  local shadow = button:CreateTexture(nil, "OVERLAY", nil, 1)
+  shadow:SetAtlas(opts.glyphAtlas)
+  shadow:SetSize(glyphEdge, glyphEdge)
+  local st = GLYPH_SHADOW_TINT
+  shadow:SetVertexColor(st[1], st[2], st[3], st[4])
+  local glyph = button:CreateTexture(nil, "OVERLAY", nil, 2)
+  glyph:SetAtlas(opts.glyphAtlas)
+  glyph:SetSize(glyphEdge, glyphEdge)
+  glyph:SetVertexColor(tint[1], tint[2], tint[3], tint[4] or 1)
+  button.Glyph = glyph
+  button.GlyphShadow = shadow
+
+  local function PlaceGlyph(push)
+    local dx, dy = push * GLYPH_PUSH * unit, -push * GLYPH_PUSH * unit
+    glyph:ClearAllPoints()
+    glyph:SetPoint("CENTER", button, "CENTER", dx, dy)
+    shadow:ClearAllPoints()
+    shadow:SetPoint("CENTER", button, "CENTER", dx + GLYPH_SHADOW * unit, dy - GLYPH_SHADOW * unit)
+  end
+  PlaceGlyph(0)
+
+  -- Pressed: the plate swaps to its pressed art (and its patch), the glyph
+  -- steps down and right as the X does.
+  button:SetScript("OnMouseDown", function()
+    if normalPatch then normalPatch:Hide() end
+    if pressedPatch then pressedPatch:Show() end
+    PlaceGlyph(1)
+  end)
+  button:SetScript("OnMouseUp", function()
+    if pressedPatch then pressedPatch:Hide() end
+    if normalPatch then normalPatch:Show() end
+    PlaceGlyph(0)
+  end)
+
+  if opts.onClick then button:SetScript("OnClick", opts.onClick) end
+  if opts.tooltip then UI.AddTooltip(button, opts.tooltip, opts.tooltipAnchor or "ANCHOR_RIGHT") end
+  return button
+end
+
+---------------------------------------------------------------------------
+-- CreateSettingsGearButton: the settings gear, the close X's sibling
+--
+-- CreateCloseStyleButton with the raid manager's settings glyph
+-- (GM-icon-settings), the tooltip "Settings" and the checkbox click sound.
+-- Every addon that puts a gear in a title bar or beside a Blizzard list
+-- uses this so they all look the same.
 --
 --   local gear = CobySuite.UI.CreateSettingsGearButton(parent, {
 --     name    = "MyAddonSettingsButton",
@@ -329,22 +374,20 @@ end
 --     tooltip = "My Addon settings",            -- default SETTINGS
 --     onClick = function() Config.ToggleSettings() end,
 --     sound   = false,                          -- skip the click sound
---     scale   = 2,                              -- the badge is 18x19 at scale 1
---     height  = 24,                             -- or size it to a neighbour's height
+--     height  = 24,                             -- the square's edge, as a neighbouring close button's; default 19
+--     scale   = 1,                              -- optional raw SetScale
 --     glyphTint = { 1, 0.82, 0.1 },             -- default the funnel's gold
 --     tooltipAnchor = "ANCHOR_RIGHT",           -- default ANCHOR_RIGHT
 --   })
 ---------------------------------------------------------------------------
 local SETTINGS_GLYPH_ATLAS = "GM-icon-settings"
-local SETTINGS_GLYPH_INSET = -1   -- the glyph atlas is padded for a 40px button
 
 function UI.CreateSettingsGearButton(parent, opts)
   opts = opts or {}
-  return UI.CreateFilterStyleButton(parent, {
+  return UI.CreateCloseStyleButton(parent, {
     name          = opts.name,
     point         = opts.point,
     glyphAtlas    = SETTINGS_GLYPH_ATLAS,
-    glyphInset    = SETTINGS_GLYPH_INSET,
     glyphTint     = opts.glyphTint,
     scale         = opts.scale,
     height        = opts.height,

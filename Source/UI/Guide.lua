@@ -14,21 +14,28 @@ local Guide = {}
 CobysCurrencySearcher.Guide = Guide
 
 local U = CobySuite_CobysCurrencySearcher.Utilities
+local T = CobySuite_CobysCurrencySearcher.UI.GuideText
 
--- A game term and a command, in the shared colors
-local function Term(text) return U.WrapColor(U.Colors.TEXT_GOLD, text) end
-local function Cmd(text) return U.WrapColor(U.Colors.HELP_COMMAND, text) end
+-- The house style (CobySuite.UI.GuideText): keys and commands in gold
+-- (T.Key), this addon's own names for its parts (filters, settings pages
+-- and controls, Go to Currency) in blue (T.Block), caveats in gray
+-- (T.Note). The game's own terms (the Currency tab, Unused, Show on
+-- Backpack, Transfer) stay plain.
+local Key, Block, Note = T.Key, T.Block, T.Note
 
 Guide.SECTIONS = {
     {
       key = "start", title = "Start here", icon = CobysCurrencySearcher.ICON,
       summary = "Open the Currency tab and type",
       body = {
-        "- Open the character window and pick the " .. Term("Currency") .. " tab. The search box sits at the top, with a funnel and a gear beside it.",
-        "- Type a few letters. Only the matching currencies show, under their headers, with no empty rows.",
-        "- Currencies inside collapsed headers are found too. Your headers stay exactly as you left them.",
-        "- Type a header's name, such as Midnight, to see everything under it.",
-        "- Escape, the clear button or closing the window empties the box (a setting can keep your text).",
+        T.Bullets({
+          "Open the character window and pick the Currency tab. The search box sits at the top, with a funnel and a gear beside it.",
+          "Type a few letters to find matching currencies. Results keep their headers unless you choose " .. Block("Flat list") .. " in settings.",
+          "Currencies inside collapsed headers are found too. Your headers stay exactly as you left them.",
+          "Type a header's name, such as Midnight, to find currencies under it. Active filters still apply.",
+          "While typing, press " .. Key("Escape") .. " to clear the search text, or click the clear button inside the search box. Filters stay on.",
+        }),
+        Note("Closing the Currency tab also clears the text unless ") .. Block("Remember my search while the window is closed") .. Note(" is on."),
       },
       try = { { "/ccs <text>", "Search the Currency tab straight from chat" } },
     },
@@ -36,43 +43,56 @@ Guide.SECTIONS = {
       key = "filters", title = "Filters", icon = "Interface\\Icons\\INV_Misc_Spyglass_03",
       summary = "The funnel narrows the list, with or without text",
       body = {
-        "- Click the funnel beside the search box and tick what you want to see.",
-        "- " .. Term("Transferable") .. ": currencies that can move between your Warband's characters. " .. Term("Owned") .. ": only the ones you have.",
-        "- " .. Term("Capped") .. ": at their maximum or earning limit. " .. Term("Weekly") .. ": the ones with a weekly limit. " .. Term("On Backpack") .. ": the ones on your backpack bar.",
-        "- Ticks add up: Owned and Transferable together show the transferable currencies this character holds.",
-        "- A red x on the funnel means a filter is on. Click it to clear them all.",
+        T.Bullets({
+          "Click the funnel beside the search box and tick what you want to see.",
+          Block("Transferable") .. ": currencies that can move between your Warband's characters. " .. Block("Owned") .. ": only the ones you have.",
+          Block("Capped") .. ": at their maximum or an earning limit, weekly included. " .. Block("Weekly") .. ": the ones with a weekly limit. " .. Block("On Backpack") .. ": the ones on your backpack bar.",
+          "Currencies must match every selected filter. " .. Block("Owned") .. " and " .. Block("Transferable") .. " together show transferable currencies with a balance above zero.",
+          "An x appears on the funnel while filters are active. Click it to clear all funnel filters. Search text stays.",
+        }),
+        Note("The game's filter dropdown also limits which currencies appear."),
       },
     },
     {
       key = "favorites", title = "Favorites", atlas = "auctionhouse-icon-favorite",
       summary = "Star the currencies you check most",
       body = {
-        "- Every currency row starts with a star. Click it to mark that currency.",
-        "- Stars are shared by all your characters and never change the order of the list.",
-        "- Tick " .. Term("Favorites") .. " in the funnel to see only your starred currencies.",
-        "- Too many stars on screen? The settings' Favorites page can show them on search results only, or only under the mouse.",
-        "- The same page counts your favorites and can clear them all at once (it asks first).",
+        T.Bullets({
+          "Click a currency's star to add or remove it from your favorites.",
+          "If stars are hidden, search for a currency and move the mouse over its row.",
+          "Stars are shared by all your characters and never change the order of the list.",
+          "Tick " .. Block("Favorites") .. " in the funnel to see only your starred currencies.",
+          "The " .. Block("Favorites") .. " settings page controls where stars appear: every row, search or filter results, or only the row under the mouse.",
+          "The same page counts your favorites and can clear them all at once (it asks first).",
+        }),
       },
     },
     {
       key = "results", title = "Clicking a result", icon = "Interface\\Icons\\INV_Misc_Coin_02",
-      summary = "Unused, Show on Backpack and Transfer, without losing the search",
+      summary = "Currency options and transfers from search results",
       body = {
-        "- Click a result to open its options right there: " .. Term("Unused") .. ", " .. Term("Show on Backpack") .. " and " .. Term("Transfer") .. ".",
-        "- Transfer opens the game's transfer menu for that currency beside the window, and your search comes back. If the menu can't open, the game's list stays up so you can finish there.",
-        "- Tooltips, linking in chat and the backpack's modified click work as they do in the game's own list.",
-        "- In combat, Transfer clears the search instead, so you can pick the currency in the game's list yourself.",
+        T.Bullets({
+          "Click a result for its currency options: Unused, Show on Backpack and, when available, Transfer.",
+          "Transfer opens the game's transfer menu for that currency beside the window, and your search comes back.",
+          "Tooltips, linking in chat and the backpack's modified click work as they do in the game's own list.",
+          "In combat, Transfer clears your search text and filters. Find the currency in the game's list and click it there.",
+        }),
+        Note("If the transfer menu cannot open, the game's list stays visible and your search is cleared."),
       },
     },
     {
       key = "chat", title = "Chat and settings", icon = "Interface\\Icons\\INV_Misc_Gear_01",
       summary = "Search from chat, and make the box work your way",
       body = {
-        "- Type " .. Cmd("/ccs <text>") .. " to search from anywhere. If the character window was last on another tab, a small window asks you to click " .. Term("Go to Currency") .. " first.",
-        "- That click is usually needed once: until you leave the window on another tab (your Character key does) or reload, " .. Cmd("/ccs <text>") .. " opens straight to Currency.",
-        "- The gear beside the funnel opens the settings, and so does /ccs settings.",
-        "- " .. Term("Results") .. ": a grouped or flat list, and whether descriptions are searched too. " .. Term("Search box") .. ": the cursor on open, what's remembered, and the search delay.",
-        "- Changes wait for " .. Term("Apply") .. ". Cancel or closing the window throws them away.",
+        T.Bullets({
+          "Type " .. Key("/ccs <text>") .. " to search from anywhere. If the character window was last on another tab, a small window asks you to click " .. Block("Go to Currency") .. " first.",
+          "After " .. Block("Go to Currency") .. ", " .. Key("/ccs <text>") .. " opens Currency directly until you switch tabs, log out or reload.",
+          "Your Character key opens the window on the Character tab, so the next " .. Key("/ccs <text>") .. " asks again.",
+          "The gear beside the funnel opens the settings, and so does " .. Key("/ccs settings") .. ".",
+          Block("Results") .. ": a grouped or flat list, and whether descriptions are searched too. " .. Block("Search box") .. ": the cursor on open, what's remembered, and the search delay.",
+          Block("Apply") .. " saves setting changes. " .. Block("Undo edits") .. " or closing the settings window discards unapplied changes. " .. Block("Defaults") .. " selects the default settings for you to Apply.",
+        }),
+        Note("Clear all favorites... takes effect after confirmation and does not wait for Apply."),
       },
       try = { { "/ccs settings", "Open the settings window" }, { "/ccs changelog", "See what changed in each version" } },
     },
@@ -80,7 +100,7 @@ Guide.SECTIONS = {
 
 local guide = CobySuite_CobysCurrencySearcher.UI.CreateGuideWindow({
   name = "CobysCurrencySearcherGuideWindow",
-  title = "Coby's Currency Searcher Guide",
+  title = U.WrapColor(CobysCurrencySearcher.BRAND_COLOR, "Coby's Currency Searcher") .. " Guide",
   icon = CobysCurrencySearcher.ICON,
   intro = "New here? Start with the first section. Click any heading to open or close it.",
   footer = "Open this guide any time with " .. U.WrapColor(U.Colors.HELP_COMMAND, "/ccs guide"),

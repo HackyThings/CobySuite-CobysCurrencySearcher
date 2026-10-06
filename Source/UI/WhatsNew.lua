@@ -17,7 +17,7 @@ CobysCurrencySearcher.WhatsNew = WhatsNew
 
 local changelog = CobySuite_CobysCurrencySearcher.UI.CreateWhatsNewWindow({
   name = "CobysCurrencySearcherChangelogWindow",
-  title = "Coby's Currency Searcher: What's New",
+  title = U.WrapColor(CobysCurrencySearcher.BRAND_COLOR, "Coby's Currency Searcher") .. ": What's New",
   icon = CobysCurrencySearcher.ICON,
   intro = "What changed in each version of Coby's Currency Searcher, newest first. Click a version to open or close it.",
   footer = "Open this window any time with " .. U.WrapColor(U.Colors.HELP_COMMAND, "/ccs changelog"),

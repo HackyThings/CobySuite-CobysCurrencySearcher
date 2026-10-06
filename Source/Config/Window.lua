@@ -32,6 +32,7 @@ local SUB_OPTION_INDENT = 24         -- a sub-option sits under the tiles it bel
 local STAR_ATLAS_ON = "auctionhouse-icon-favorite"
 local STAR_ATLAS_OFF = "auctionhouse-icon-favorite-off"
 local FUNNEL_ATLAS = "ui-questtrackerbutton-filter"
+local MAGNIFIER_ATLAS = "common-search-magnifyingglass"   -- the search box's own glyph
 local SPYGLASS_ICON = "Interface\\Icons\\INV_Misc_Spyglass_03"
 local POINTER_ICON = "Interface\\CURSOR\\Point"   -- the game's own pointer
 
@@ -46,6 +47,7 @@ local SAMPLES = {
   { id = 1602, name = "Conquest" },
 }
 local SAMPLE_GROUP = "Player vs. Player"
+local SAMPLE_QUERY = "Player"   -- finds both samples through their group
 local SAMPLE_ICON = "Interface\\Icons\\INV_Misc_Coin_02"
 local ROW_H = 14
 
@@ -106,14 +108,28 @@ local function EveryRowPreview(frame)
   SampleRow(frame, 1, 2, { star = "off" })
 end
 
--- Search results only: the same, each row marked as a result
+-- Search results only: a drawn search box with a query above the same two
+-- rows. Tile previews sit on the tile's bottom edge, so these rows line up
+-- with the other tiles', whose previews are a line shorter. A picture only,
+-- never an edit box inside a clickable tile.
+local MOCK_BOX_WIDTH = 64
 local function ResultsPreview(frame)
+  local box = frame:CreateTexture(nil, "BACKGROUND")
+  box:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+  box:SetSize(MOCK_BOX_WIDTH, ROW_H - 2)
+  local bg = U.Colors.CONTENT_BG
+  box:SetColorTexture(bg[1], bg[2], bg[3], bg[4])
+  local glass = frame:CreateTexture(nil, "ARTWORK")
+  glass:SetSize(10, 10)
+  glass:SetPoint("LEFT", box, "LEFT", 3, 0)
+  glass:SetAtlas(MAGNIFIER_ATLAS)
+  local query = frame:CreateFontString(nil, "OVERLAY", U.Fonts.DATA)
+  query:SetPoint("LEFT", glass, "RIGHT", 3, 0)
+  query:SetText(SAMPLE_QUERY)
+  local gray = U.Colors.LABEL_GRAY
+  query:SetTextColor(gray[1], gray[2], gray[3])
   for i = 1, 2 do
-    SampleRow(frame, i - 1, i, { star = i == 1 and "on" or "off" })
-    local glass = frame:CreateTexture(nil, "ARTWORK")
-    glass:SetSize(11, 11)
-    glass:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -(i - 1) * ROW_H - 1)
-    glass:SetTexture(SPYGLASS_ICON)
+    SampleRow(frame, i, i, { star = i == 1 and "on" or "off" })
   end
 end
 
@@ -212,7 +228,7 @@ local window = UI.CreateSettingsWindow({
           key = Opt.MATCH_DESCRIPTIONS,
           options = {
             { value = false, label = "Currency and group names",
-              description = "Typing a group's name shows that whole group." },
+              description = "A group name finds its currencies. Active filters still apply." },
             { value = true, label = "Also search descriptions",
               description = "Also finds a currency by what its description says." },
           },
@@ -226,7 +242,7 @@ local window = UI.CreateSettingsWindow({
           atlas = STAR_ATLAS_ON,
           subtitle = "Click the star at the start of a currency row to make it a favorite.",
         })
-        -- kept on the panel for the Search suite's hover check
+        -- kept on the panel for the Search suite's hover check and the Verify scenes
         panel.StarTiles = panel:Tiles{
           key = Opt.STAR_MODE, columns = 3, height = 124,
           options = {
@@ -237,8 +253,8 @@ local window = UI.CreateSettingsWindow({
             },
             {
               value = "results", title = "Search results",
-              description = "Only in results. The game's list stays as it was.",
-              preview = ResultsPreview, previewHeight = 2 * ROW_H,
+              description = "Stars appear when searching or filtering.",
+              preview = ResultsPreview, previewHeight = 3 * ROW_H,
             },
             {
               value = "hover", title = "On hover",
@@ -268,13 +284,13 @@ local window = UI.CreateSettingsWindow({
         }
         panel:Button{
           text = "Clear all favorites...", width = 180,
-          description = "For every character. Cancel and Defaults don't bring them back.",
+          description = "Clears favorites for all your characters after confirmation.",
           immediate = true,
           enabledWhen = function() return FavoriteCount() > 0 end,
           onClick = function()
             local n = FavoriteCount()
             if n == 0 then return end
-            clearPopup:SetBody(("Remove all %d favorite%s from every character?\n\nThis happens right away. Cancel and Defaults won't bring them back.")
+            clearPopup:SetBody(("Clear your %d favorite%s for all your characters?\n\nThis does not wait for Apply and cannot be undone.")
               :format(n, n == 1 and "" or "s"))
             clearPopup:Show()
           end,
@@ -284,10 +300,10 @@ local window = UI.CreateSettingsWindow({
     {
       key = "searchbox", label = "Search box",
       build = function(panel)
-        panel:Section("When the tab opens", { icon = "Interface\\Icons\\INV_Misc_PocketWatch_01" })
+        panel:Section("When the Currency tab opens", { icon = "Interface\\Icons\\INV_Misc_PocketWatch_01" })
         panel:Checkbox{
-          key = Opt.FOCUS_ON_OPEN, label = "Put the cursor in the search box when the tab opens",
-          description = "Start typing straight away. Movement keys type into the box while it has the cursor.",
+          key = Opt.FOCUS_ON_OPEN, label = "Put the cursor in the search box",
+          description = "Movement keys type into the box until you press Enter or click elsewhere.",
         }
         panel:Section("Remember", {
           icon = "Interface\\Icons\\INV_Misc_Book_09",
@@ -306,7 +322,7 @@ local window = UI.CreateSettingsWindow({
           key = Opt.SEARCH_DELAY, label = "Search delay",
           description = "How long after your last keystroke the results update.",
           min = 0, max = 0.5, step = 0.05,
-          minLabel = "Instant", maxLabel = "0.5 seconds",
+          minLabel = "Instant", maxLabel = "0.50 s",
           format = function(v)
             if v < 0.001 then return "Instant" end
             return ("%.2f s"):format(v)
@@ -324,11 +340,10 @@ clearPopup = UI.CreateDialogPopup({
   icon = CobysCurrencySearcher.ICON,
   title = "Clear all favorites?",
   danger = true,
-  width = 380,
-  height = 170,
+  width = 380,   -- the height follows the body
   parent = window,
   point = { "CENTER", window, "CENTER", 0, 0 },
-  confirmText = "Remove all",
+  confirmText = "Clear favorites",
   hidden = true,
   onConfirm = function()
     local favorites = CobysCurrencySearcher.Favorites

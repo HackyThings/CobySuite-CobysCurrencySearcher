@@ -4,6 +4,31 @@ All notable changes to Coby's Currency Searcher are documented here. Format foll
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-10-06
+
+### Changed
+
+- **A clearer guide.** Short bullet lists, with commands and the addon's own names in color, and corrected details: what Escape and the funnel's x clear, how filters combine, and what happens to your search when a transfer can't open.
+
+- **Clearer messages and tooltips.** The empty results say what to check next, the Transfer button says when your search and filters come back, the filter tooltips (the funnel's x included) say exactly what each one keeps or clears, and the Go to Currency window and the combat messages say what to do next.
+
+- The funnel's menu now has a solid background, so the currency list no longer shows through it.
+
+- The settings gear now has the same red plate and grey rim as Blizzard's close X, with a larger gold gear. Its tooltip reads "Coby's Currency Searcher settings".
+
+- The guide's scroll bar is slimmer, and the settings scroll bar is easier to grab.
+
+- In the flat list, each currency now shows just its own group after its name (Crests rather than Midnight > Crests), in a lighter gray, so long names are no longer cut off.
+
+- **Settings:** the Cancel button is now **Undo edits**, with the same job: it drops changes you have not applied.
+
+- The Favorites page's "Search results" picture now shows a search box above the starred rows. The Clear all favorites confirmation is tighter and its button reads "Clear favorites".
+
+### Fixed
+
+- After **Go to Currency**, `/ccs <text>` sometimes opened the Currency tab with an empty search box; the search now always arrives.
+- When Transfer left a currency below the first screen of the game's list, the chat line could read just "Honor is." It now says where to scroll and what to click.
+
 ## [1.0.5] - 2026-10-01
 
 ### Added
@@ -101,7 +126,8 @@ Initial release of Coby's Currency Searcher.
 - "Match descriptions too" option to search description text as well as names.
 - `/ccs <text>` searches the Currency tab for the text, or arms the search until you open the tab; `/ccs settings`, `/ccs debug`, `/ccs version`, `/ccs help`.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.6
 [1.0.5]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.5
 [1.0.4]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.4
 [1.0.3]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.3

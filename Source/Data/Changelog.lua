@@ -15,6 +15,24 @@ CobysCurrencySearcher.Data = CobysCurrencySearcher.Data or {}
 
 CobysCurrencySearcher.Data.Changelog = {
   {
+    version = "1.0.6",
+    title = "A clearer guide and a search that always arrives",
+    date = "2026-10-06",
+    changed = {
+      "Guide: short bullet lists and corrected details",
+      "Messages and tooltips say what to do next",
+      "Funnel menu: a solid background",
+      "Settings gear: matches Blizzard's close button",
+      "Flat list: just the currency's own group after its name",
+      "Settings: Cancel is now Undo edits",
+      "Many smaller look and wording improvements",
+    },
+    fixed = {
+      "Go to Currency: your /ccs search always reaches the box",
+      "Transfer: the chat line says where to scroll and what to click",
+    },
+  },
+  {
     version = "1.0.5",
     title = "New settings look",
     date = "2026-10-01",

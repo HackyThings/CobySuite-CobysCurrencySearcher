@@ -8,7 +8,7 @@ CobysCurrencySearcher = {
 CobysCurrencySearcher.BRAND_COLOR = "F2C94C"
 CobysCurrencySearcher.ICON = "Interface\\Icons\\INV_Misc_Coin_01"   -- the TOC's IconTexture
 -- the group name after a flat result's name (the results and the settings' example)
-CobysCurrencySearcher.FLAT_GROUP_COLOR = CobySuite_CobysCurrencySearcher.Utilities.ColorToHex(CobySuite_CobysCurrencySearcher.Utilities.Colors.DISABLED_GRAY)
+CobysCurrencySearcher.FLAT_GROUP_COLOR = CobySuite_CobysCurrencySearcher.Utilities.ColorToHex(CobySuite_CobysCurrencySearcher.Utilities.Colors.LABEL_GRAY)
 
 -------------------------------------------------------------------------------
 -- EventBus event constants
@@ -103,7 +103,6 @@ local launcher = CobySuite_CobysCurrencySearcher.UI.CreateLauncher({
     })
   end,
 })
-CobysCurrencySearcher.Launcher = launcher
 
 function CobysCurrencySearcher_OnAddonCompartmentClick(_, button) launcher:OnCompartmentClick(button) end
 function CobysCurrencySearcher_OnAddonCompartmentEnter(_, menuItem) launcher:OnCompartmentEnter(menuItem) end

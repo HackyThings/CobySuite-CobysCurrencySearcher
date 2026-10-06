@@ -4,7 +4,7 @@
 
 CobysCurrencySearcher.DebugWindow = CobySuite_CobysCurrencySearcher.Debug.NewWindow({
   windowName = "CobysCurrencySearcherDebugWindow",
-  title = "Coby's Currency Searcher Debug Log",
+  title = CobySuite_CobysCurrencySearcher.Utilities.WrapColor(CobysCurrencySearcher.BRAND_COLOR, "Coby's Currency Searcher") .. " Debug Log",
   icon = CobysCurrencySearcher.ICON,
   logger = CobysCurrencySearcher.Debug,
 })
