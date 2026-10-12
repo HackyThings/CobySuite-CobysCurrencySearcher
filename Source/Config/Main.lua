@@ -15,6 +15,7 @@ local base = CobySuite_CobysCurrencySearcher.Config.New({
     STAR_KEEP_FAVORITES = "star_keep_favorites",  -- hover mode: starred currencies keep their star without hovering
     FILTERS_PERSIST    = "filters_persist",   -- keep the filter set across logins
     SAVED_FILTERS      = "saved_filters",     -- { [filterKey] = true }, non-empty only while FILTERS_PERSIST is on (emptied when it turns off)
+    VERSION_CHECK      = "version_check",     -- share the version with guild and group, a chat line when a newer one is out
   },
   defaults = {
     ["match_descriptions"] = false,
@@ -26,6 +27,7 @@ local base = CobySuite_CobysCurrencySearcher.Config.New({
     ["star_keep_favorites"] = true,
     ["filters_persist"]    = false,
     ["saved_filters"]      = {},   -- never mutated in place: writers Set a fresh table
+    ["version_check"]      = true,
   },
   -- Set refuses a failing value and InitializeData puts the default back for
   -- a failing saved one (a hand-edited or damaged file). The ranges are what
@@ -40,6 +42,7 @@ local base = CobySuite_CobysCurrencySearcher.Config.New({
     ["star_mode"]           = { type = "string", values = { "always", "results", "hover" } },
     ["star_keep_favorites"] = { type = "boolean" },
     ["filters_persist"]     = { type = "boolean" },
+    ["version_check"]       = { type = "boolean" },
   },
   quietKeys = { "saved_filters" },
   debug = CobysCurrencySearcher.Debug,

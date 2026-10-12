@@ -30,7 +30,7 @@ CobysCurrencySearcher.VERSION = VERSION
 -- Slash commands
 --
 -- Registered through CobySuite.Slash, which generates help and version, with
--- the suite's standard commands (settings, guide, changelog, debug, test).
+-- the suite's standard commands (settings, guide, changelog, addons, debug, test).
 -- The addon has no main window, so there is no show command and a bare /ccs
 -- opens settings (the suite's standard). Anything that is not a command is a search query
 -- (fallback). Everything else loads after Core.lua, so each command
@@ -42,13 +42,34 @@ local function ToggleSettings()
   end
 end
 
+-- "/ccs addons" and the guide's last section: every addon by Cobanyte
+-- (CobySuite.UI.ToggleAddonsWindow, the same list in each addon)
+CobysCurrencySearcher.AddonsList = {
+  host = "CobysCurrencySearcher", slash = "/ccs", icon = CobysCurrencySearcher.ICON,
+  message = function(text) CobysCurrencySearcher.Utilities.Message(text) end,
+  state = function() return COBYS_CURRENCY_SEARCHER_WINDOW_STATE end,   -- the list remembers its place and size
+}
+
+-- "/ccs reset windows" (CobySuite.UI.ConfirmResetWindows): every window the
+-- addon builds saves its place into COBYS_CURRENCY_SEARCHER_WINDOW_STATE, so
+-- that one table finds them all (settings, guide, changelog, addons list); the
+-- debug log window saves nothing, so it is listed by itself
+CobysCurrencySearcher.WindowsReset = {
+  host = "CobysCurrencySearcher", title = "Coby's Currency Searcher", icon = CobysCurrencySearcher.ICON,
+  message = function(text) CobysCurrencySearcher.Utilities.Message(text) end,
+  states = { function() return COBYS_CURRENCY_SEARCHER_WINDOW_STATE end },
+  windows = function() return { CobysCurrencySearcher.DebugWindow } end,
+}
+
 local commands = CobySuite_CobysCurrencySearcher.Slash.StandardCommands({
   settings = ToggleSettings,
+  addons = CobysCurrencySearcher.AddonsList,
   guide = function() if CobysCurrencySearcher.Guide then CobysCurrencySearcher.Guide.Toggle() end end,
   changelog = function() if CobysCurrencySearcher.WhatsNew then CobysCurrencySearcher.WhatsNew.Toggle() end end,
   debug = function()
     if CobysCurrencySearcher.DebugWindow then CobysCurrencySearcher.DebugWindow:Toggle() end
   end,
+  resetWindows = CobysCurrencySearcher.WindowsReset,
   -- Development only: the suites are stripped from release builds, and the
   -- test command's available() hides it from help there, so "/ccs test" is
   -- a search again in a release
@@ -125,5 +146,11 @@ end)
 EventUtil.RegisterOnceFrameEventAndCallback("PLAYER_LOGIN", function()
   -- A fresh install opens the guide; an update, the changelog
   if CobysCurrencySearcher.WhatsNew then CobysCurrencySearcher.WhatsNew.OnLogin() end
+  -- The suite's version check: a chat line when a newer release is out
+  CobySuite_CobysCurrencySearcher.VersionCheck.Register({
+    key = "CCS", addon = ADDON_NAME, title = "Coby's Currency Searcher", color = CobysCurrencySearcher.BRAND_COLOR,
+    enabled = function() return CobysCurrencySearcher.Config.Get(CobysCurrencySearcher.Config.Options.VERSION_CHECK) end,
+    log = function(fmt, ...) CobysCurrencySearcher.Debug.Log("INIT", fmt, ...) end,
+  })
   CobysCurrencySearcher.Debug.Log("INIT", "PLAYER_LOGIN complete")
 end)

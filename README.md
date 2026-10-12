@@ -10,13 +10,13 @@ If you've ever opened the Currency tab to check one number, scrolled past six ex
 
 Blizzard's tab has no search, and collapsed headers hide their currencies completely. This addon shows only the matching rows, in Blizzard's order and row style, with no empty gaps. Blizzard's own list stays untouched underneath, which keeps warband transfers working.
 
-## How It Works
+## How it works
 
 1. **Open the Currency tab.** A search box, a funnel and a settings gear sit beside Blizzard's filter dropdown.
 2. **Type.** Only the matching currencies show, under their headers, with no gaps. (The Flat list setting drops the headers and puts each currency's group after its name.)
 3. **Collapsed headers are searched too.** Your headers are never changed.
 4. **Type a header's name** ("Midnight", "Dungeon and Raid") to see everything under it. Filters you have on still apply.
-5. **Filter.** The funnel offers Favorites, Transferable, Owned, Capped (at their maximum or an earning limit, weekly included), Weekly (has a weekly limit) and On Backpack, with or without search text. Filters combine: Owned plus Transferable shows the transferable currencies this character holds. A red x on the funnel means a filter is on; click it to clear.
+5. **Filter.** The funnel offers Favorites, Transferable, Owned, Capped (at their maximum or an earning limit, weekly included), Weekly (has a weekly limit) and On backpack, with or without search text. Filters combine: Owned plus Transferable shows the transferable currencies this character holds. A red x on the funnel means a filter is on; click it to clear.
 6. **Star favorites.** Click the star at the start of any row, in Blizzard's list or in results. Stars are shared by all your characters and never reorder anything. Tick Favorites in the funnel to see only starred currencies. A setting shows stars on search results only, or only under the mouse.
 7. **Clearing.** Escape, the clear button or closing the window clears the text (a setting keeps it). Filters stay on until you clear them.
 
@@ -25,13 +25,13 @@ Also handled:
 - **Nested sub-headers** inside collapsed headers are found, and same-named sub-headers under different parents are kept apart.
 - **Collapsing a header in the results** hides rows in the results only; your real headers are untouched.
 - **Clicking a result** opens its options in place: Unused, Show on Backpack and Transfer. Transfer opens the transfer menu for that currency beside the window and your search comes back. If it can't (the currency can't be transferred now, or sits too far down the list; chat says where), the game's list stays up so you can finish there, and your search and filters are cleared.
-- **Row actions.** Tooltips, shift-click to link and the backpack's modified click work as on Blizzard's rows.
+- **Row actions.** Tooltips, Shift-click to link and the backpack's modified click work as on Blizzard's rows.
 - **Account data still loading?** The results fill in as soon as it arrives.
 - **Logged in during combat?** The search box appears when combat ends.
 
-## Guide and What's New
+## Guide and what's new
 
-`/ccs guide` opens a short feature guide; it also opens the first time you log in with the addon. After an update, What's New lists what changed; `/ccs changelog` opens it any time.
+`/ccs guide` opens a short feature guide; it also opens the first time you log in with the addon. After an update, What's new lists what changed; `/ccs changelog` opens it any time.
 
 ## Install
 
@@ -39,16 +39,18 @@ Also handled:
 
 **Manual:** Drop the `CobysCurrencySearcher` folder into your `Interface/AddOns/`. No dependencies.
 
-## Slash Commands
+## Slash commands
 
 ```
-/ccs <text>       Open the Currency tab and search for <text>
-/ccs settings     Open or close the settings window (also /ccs config, /ccs options, /ccs show)
-/ccs guide        Open or close the feature guide (also /ccs tutorial)
-/ccs changelog    Open or close the changelog: what changed in each version (also /ccs whatsnew, /ccs news, /ccs change)
-/ccs debug        Open or close the debug log window
-/ccs version      Print the addon version
-/ccs help         Show this help
+/ccs <text>         Open the Currency tab and search for <text>
+/ccs settings       Open or close the settings window (also /ccs config, /ccs options, /ccs show)
+/ccs guide          Open or close the feature guide (also /ccs tutorial)
+/ccs changelog      Open or close the changelog: what changed in each version (also /ccs whatsnew, /ccs news, /ccs change)
+/ccs addons         Every addon by Cobanyte, with CurseForge links and pictures (also /ccs other, /ccs more)
+/ccs debug          Open or close the debug log window
+/ccs reset windows  Put every window back to its default place and size
+/ccs version        Print the addon version
+/ccs help           Show this help
 ```
 
 `/cobyscurrencysearcher` works the same. `/ccs` on its own opens the settings. The command words above are never searched; to find a currency named like one, use the search box.
@@ -62,10 +64,11 @@ Also handled:
 
 ## Settings
 
-Open with `/ccs settings`, the gear beside the funnel, the addon list on the minimap, or Options > AddOns. Changes wait for Apply; Undo edits or closing the window throws them away. Defaults fills in the defaults for you to Apply. Drag the bottom-right corner to resize.
+Open with `/ccs settings`, the gear beside the funnel, the addon list on the minimap, or Options > AddOns. Changes wait for Apply; Undo Edits or closing the window throws them away. Defaults fills in the defaults for you to Apply. Drag the bottom-right corner to resize.
 
 - **Results:** Grouped (default) or Flat list; search names only (default), or descriptions too.
-- **Favorites:** where stars show (every row, search results only, or on hover, with favorites kept lit), and Clear all favorites (asks first; Undo edits and Defaults don't bring them back).
+- **Updates:** a chat line when someone in your guild or group has a newer version (on by default; "Tell me when a newer version is out" turns it off).
+- **Favorites:** where stars show (every row, search results only, or on hover, with favorites kept lit), and Clear All Favorites (asks first; Undo Edits and Defaults don't bring them back).
 - **Search box:** the cursor in the box when the tab opens, remember your search while the window is closed, remember filters between logins, and the search delay (default 0.2 s).
 
 ## Troubleshooting
@@ -106,7 +109,7 @@ Open with `/ccs settings`, the gear beside the funnel, the addon list on the min
 
 GPL-2.0. See [LICENSE](LICENSE).
 
-## Issues / Feedback
+## Issues / feedback
 
 Found a bug? Run `/ccs debug`, press **Copy Last 250** and send the text with a line about what you were doing. The log holds the addon version, your WoW build and your settings.
 

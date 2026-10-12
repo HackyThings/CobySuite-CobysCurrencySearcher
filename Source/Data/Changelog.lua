@@ -15,6 +15,19 @@ CobysCurrencySearcher.Data = CobysCurrencySearcher.Data or {}
 
 CobysCurrencySearcher.Data.Changelog = {
   {
+    version = "1.0.7",
+    title = "Reset windows, more addons and a version notice",
+    date = "2026-10-11",
+    new = {
+      "{/ccs} reset windows: every window back to its default place and size",
+      "{/ccs} addons: every addon by Cobanyte, with CurseForge links",
+      "Newer version notice: a chat line when someone in your guild or group has a newer version",
+    },
+    changed = {
+      "{/ccs} reset, addons, other and more are commands now, not searches",
+    },
+  },
+  {
     version = "1.0.6",
     title = "A clearer guide and a search that always arrives",
     date = "2026-10-06",

@@ -38,7 +38,7 @@
 --     header inside the results only hides its rows in the results.
 --   * The filter icon (funnel) beside the box opens a small menu of
 --     checkbox filters (FILTER_DEFS: Favorites, Transferable, Owned, Capped,
---     Weekly, On Backpack). A filter narrows the results with or
+--     Weekly, On backpack). A filter narrows the results with or
 --     without search text; headers then stay only for the rows they still
 --     contain. Filters last for the session and, like the text, are
 --     cleared by the popup's Transfer button and put back once the
@@ -153,7 +153,7 @@ local FILTER_DEFS = {
   },
   {
     key = "backpack",
-    label = "On Backpack",
+    label = "On backpack",
     tooltip = "Only currencies shown on the backpack bar.",
     test = function(data) return data.isShowInBackpack == true end,
   },
@@ -229,7 +229,7 @@ local openPrompt           -- /ccs's "Go to Currency" window; built in Setup
 local pendingSearch        -- /ccs text waiting for the Currency tab to show (nil = none)
 local promptAfterCombat = false  -- /ccs asked in combat: show the prompt once it ends
 local promptClicking = false     -- Go to Currency's click is running (PreClick to PostClick)
-local promptClicked = false      -- a Go to Currency click ran since the prompt last asked (Task #288)
+local promptClicked = false      -- a Go to Currency click ran since the prompt last asked
 local promptKeepingText = false  -- HidePrompt(true) is closing the prompt with the text kept
 local previewSettings      -- a Verify scene's preview (Search._test.BeginPreview): option key -> value shown
                            -- without being saved; nil outside a preview. Memory only.
@@ -348,7 +348,9 @@ local function CopyRow(info, index, stack)
   return row
 end
 
-local function SnapshotCurrencyList()
+-- A named module function, so the Perf probes can reach it (a seam: the
+-- caller goes through the table, nothing else changed)
+function Search.SnapshotCurrencyList()
   local expanded = ExpandAllHeaders()
   lastCollapsedKeys = expanded.keys
   local rows = {}
@@ -420,7 +422,7 @@ end
 -- session, and only while the option is on.
 local descriptions = {}   -- currencyID -> lowercased description ("" when none)
 
-local function DescriptionOf(data)
+function Search.DescriptionOf(data)
   local id = data.currencyID
   if not id then return "" end
   local desc = descriptions[id]
@@ -442,7 +444,7 @@ local function Matches(data, needle, matchDescriptions)
     return true
   end
   if matchDescriptions and not data.isHeader then
-    local desc = DescriptionOf(data)
+    local desc = Search.DescriptionOf(data)
     if desc ~= "" and strfind(desc, needle, 1, true) then
       return true
     end
@@ -495,7 +497,7 @@ end
 -- kept. Rows under a header the user collapsed inside the results are left
 -- out. An empty needle matches every name, so a filter alone lists the
 -- whole filtered tab.
-local function BuildResults(rows, needle, matchDescriptions)
+function Search.BuildResults(rows, needle, matchDescriptions)
   local keep = {}
   local stack = {}   -- ancestry of the row being visited: { data, depth, force }
   local kept = 0
@@ -591,8 +593,8 @@ local function Refresh()
     return
   end
 
-  local rows, expanded = SnapshotCurrencyList()
-  local results, kept = BuildResults(rows, query, Setting(Config.Options.MATCH_DESCRIPTIONS))
+  local rows, expanded = Search.SnapshotCurrencyList()
+  local results, kept = Search.BuildResults(rows, query, Setting(Config.Options.MATCH_DESCRIPTIONS))
   lastResults = results
   resultsBox:SetDataProvider(CreateDataProvider(results), ScrollBoxConstants.RetainScrollPosition)
   if kept == 0 and filters.favorites and Favorites.Count() == 0 then
@@ -788,7 +790,7 @@ end
 -- Post-hook on TokenEntryMixin:Initialize: runs for Blizzard's rows and
 -- ours after Blizzard's own initializer. No frame is created in combat
 -- (root rule); the next initialization out of combat catches up.
-local function OnEntryInitialized(row)
+function Search.OnEntryInitialized(row)
   if not stars[row] and not InCombatLockdown() then
     CreateStar(row)
   end
@@ -873,7 +875,7 @@ local function InitEntry(button, data)
   if data.group and data.group ~= "" and Setting(Config.Options.FLAT_RESULTS) then
     -- Flat results carry their own group after the name, dimmed. Only the
     -- innermost header: the whole path ("Midnight > Crests") cut off both
-    -- the name and the group in the row's width (Task #237's shots).
+    -- the name and the group in the row's width.
     button.Content.Name:SetText(data.name .. "  " .. U.WrapColor(FLAT_GROUP_COLOR, data.group))
   end
 end
@@ -1759,7 +1761,7 @@ end
 -- delegate at the popup's toggle. Otherwise, a backpack hand-off's rebuild
 -- included, refresh our results from the same data. Their frames are only
 -- ever read.
-local function OnTokenFrameUpdated()
+function Search.OnTokenFrameUpdated()
   blizzardListStale = false   -- any rebuild, theirs or ours, is fresh
   wipe(watchedOverrides)      -- the rebuilt rows carry the real backpack state
   if macroInFlight and macroMode == "backpack" and backpackHandoff then
@@ -2240,7 +2242,7 @@ local function Setup()
   -- Hook the frame instance: the mixin methods are copied onto the frame,
   -- and every internal call goes through TokenFrame:Update(). The hook only
   -- refreshes our results (and aims the delegates during a hand-off).
-  hooksecurefunc(TokenFrame, "Update", OnTokenFrameUpdated)
+  hooksecurefunc(TokenFrame, "Update", function() Search.OnTokenFrameUpdated() end)
   TokenFrame:HookScript("OnHide", OnTokenFrameHidden)
   TokenFrame:HookScript("OnShow", function()
     -- Not during a hand-off's tab detour (transfer or backpack).
@@ -2280,7 +2282,7 @@ EventUtil.ContinueOnAddOnLoaded("Blizzard_TokenUI", Setup)
 -- row gets its star on first use and a refresh on every reuse.
 local function InstallStarHook()
   if TokenEntryMixin and TokenEntryMixin.Initialize then
-    hooksecurefunc(TokenEntryMixin, "Initialize", OnEntryInitialized)
+    hooksecurefunc(TokenEntryMixin, "Initialize", function(row) Search.OnEntryInitialized(row) end)
   else
     Debug.Warn("INIT", "TokenEntryMixin is missing or changed shape; favorite stars not installed")
   end
@@ -2570,7 +2572,7 @@ Search._test = {
   HANDOFF_ENABLED = SECURE_BACKPACK_HANDOFF,
   seams = seams,
   WithState = WithState,
-  BuildResults = BuildResults,
+  BuildResults = Search.BuildResults,
   Matches = Matches,
   PassesFilters = PassesFilters,
   OnBackpackPreClick = OnBackpackPreClick,
@@ -2579,7 +2581,7 @@ Search._test = {
   OnWatchPostClick = OnWatchPostClick,
   OnTransferPreClick = OnTransferPreClick,
   OnTransferPostClick = OnTransferPostClick,
-  OnTokenFrameUpdated = OnTokenFrameUpdated,
+  OnTokenFrameUpdated = Search.OnTokenFrameUpdated,
   OnTokenFrameHidden = OnTokenFrameHidden,
   OnPopupShown = OnPopupShown,
   OnPopupHidden = OnPopupHidden,

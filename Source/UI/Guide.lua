@@ -46,7 +46,7 @@ Guide.SECTIONS = {
         T.Bullets({
           "Click the funnel beside the search box and tick what you want to see.",
           Block("Transferable") .. ": currencies that can move between your Warband's characters. " .. Block("Owned") .. ": only the ones you have.",
-          Block("Capped") .. ": at their maximum or an earning limit, weekly included. " .. Block("Weekly") .. ": the ones with a weekly limit. " .. Block("On Backpack") .. ": the ones on your backpack bar.",
+          Block("Capped") .. ": at their maximum or an earning limit, weekly included. " .. Block("Weekly") .. ": the ones with a weekly limit. " .. Block("On backpack") .. ": the ones on your backpack bar.",
           "Currencies must match every selected filter. " .. Block("Owned") .. " and " .. Block("Transferable") .. " together show transferable currencies with a balance above zero.",
           "An x appears on the funnel while filters are active. Click it to clear all funnel filters. Search text stays.",
         }),
@@ -89,14 +89,20 @@ Guide.SECTIONS = {
           "After " .. Block("Go to Currency") .. ", " .. Key("/ccs <text>") .. " opens Currency directly until you switch tabs, log out or reload.",
           "Your Character key opens the window on the Character tab, so the next " .. Key("/ccs <text>") .. " asks again.",
           "The gear beside the funnel opens the settings, and so does " .. Key("/ccs settings") .. ".",
-          Block("Results") .. ": a grouped or flat list, and whether descriptions are searched too. " .. Block("Search box") .. ": the cursor on open, what's remembered, and the search delay.",
-          Block("Apply") .. " saves setting changes. " .. Block("Undo edits") .. " or closing the settings window discards unapplied changes. " .. Block("Defaults") .. " selects the default settings for you to Apply.",
+          Block("Results") .. ": a grouped or flat list, whether descriptions are searched too, and the newer-version notice. " .. Block("Search box") .. ": the cursor on open, what's remembered, and the search delay.",
+          Block("Apply") .. " saves setting changes. " .. Block("Undo Edits") .. " or closing the settings window discards unapplied changes. " .. Block("Defaults") .. " selects the default settings for you to Apply.",
         }),
-        Note("Clear all favorites... takes effect after confirmation and does not wait for Apply."),
+        Note("Clear All Favorites... takes effect after confirmation and does not wait for Apply."),
       },
-      try = { { "/ccs settings", "Open the settings window" }, { "/ccs changelog", "See what changed in each version" } },
+      try = {
+        { "/ccs settings", "Open the settings window" },
+        { "/ccs changelog", "See what changed in each version" },
+        { "/ccs reset windows", "Put every window back to its default place and size" },
+      },
     },
 }
+-- The last section in every addon's guide: the list of every addon by Cobanyte
+Guide.SECTIONS[#Guide.SECTIONS + 1] = CobySuite_CobysCurrencySearcher.UI.AddonsGuideSection(CobysCurrencySearcher.AddonsList)
 
 local guide = CobySuite_CobysCurrencySearcher.UI.CreateGuideWindow({
   name = "CobysCurrencySearcherGuideWindow",

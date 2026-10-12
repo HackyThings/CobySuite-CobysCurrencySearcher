@@ -2,16 +2,17 @@
 -- CobysCurrencySearcher Settings Window
 --
 -- The suite's standard settings window (CobySuite.UI.CreateSettingsWindow),
--- compact size preset (640 x 460), with the shared styled rows (Task #57):
--- - Results: the layout as two picture tiles (Grouped / Flat list) and what
---   a search matches as a two-choice radio
+-- compact size preset (640 x 460), with the shared styled rows:
+-- - Results: the layout as two picture tiles (Grouped / Flat list), what
+--   a search matches as a two-choice radio, and the suite's version check
+--   (its Updates section)
 -- - Favorites: where the stars show as three picture tiles, the hover-only
 --   "Always show stars on favorites" under them, how many favorites there
 --   are, and Clear all favorites (at once, after a confirmation; outside
---   Apply, Cancel and Defaults)
+--   Apply, Undo Edits and Defaults)
 -- - Search box: the cursor on open, what is remembered, the search delay
 -- A Guide button beside Defaults, staged edits that Apply writes through
--- Config.Set, Cancel, and Defaults. Built at load, so opening it never
+-- Config.Set, Undo Edits and Defaults. Built at load, so opening it never
 -- creates frames in combat (the tile previews draw only textures and font
 -- strings on frames the kit made at build); the controls are painted from
 -- config on every show, a ConfigChanged event repaints an open window, and
@@ -61,7 +62,7 @@ local function Sample(i)
 end
 
 -- One example row at line (0 first): opts.star ("on", "off" or nil), the
--- currency's icon and name, opts.tail (grey text after the name) and
+-- currency's icon and name, opts.tail (gray text after the name) and
 -- opts.indent. Returns the row's parts.
 local function SampleRow(frame, line, i, opts)
   opts = opts or {}
@@ -215,7 +216,7 @@ local window = UI.CreateSettingsWindow({
             },
             {
               value = true, title = "Flat list",
-              description = "Only the matching currencies, each with its group in grey after the name.",
+              description = "Only the matching currencies, each with its group in gray after the name.",
               preview = FlatPreview, previewHeight = 3 * ROW_H,
             },
           },
@@ -233,6 +234,7 @@ local window = UI.CreateSettingsWindow({
               description = "Also finds a currency by what its description says." },
           },
         }
+        CobySuite_CobysCurrencySearcher.VersionCheck.AddSettingsRows(panel, Opt.VERSION_CHECK)
       end,
     },
     {
@@ -283,7 +285,7 @@ local window = UI.CreateSettingsWindow({
           text = "Tick Favorites in the funnel menu beside the search box to see only your favorites.",
         }
         panel:Button{
-          text = "Clear all favorites...", width = 180,
+          text = "Clear All Favorites...", width = 180,
           description = "Clears favorites for all your characters after confirmation.",
           immediate = true,
           enabledWhen = function() return FavoriteCount() > 0 end,
@@ -334,7 +336,7 @@ local window = UI.CreateSettingsWindow({
 })
 
 -- Clear all favorites asks first, in an addon-owned dialog (never
--- StaticPopupDialogs); it acts at once, outside Apply, Cancel and Defaults
+-- StaticPopupDialogs); it acts at once, outside Apply, Undo Edits and Defaults
 clearPopup = UI.CreateDialogPopup({
   name = "CobysCurrencySearcherClearFavoritesPopup",
   icon = CobysCurrencySearcher.ICON,
@@ -343,7 +345,7 @@ clearPopup = UI.CreateDialogPopup({
   width = 380,   -- the height follows the body
   parent = window,
   point = { "CENTER", window, "CENTER", 0, 0 },
-  confirmText = "Clear favorites",
+  confirmText = "Clear Favorites",
   hidden = true,
   onConfirm = function()
     local favorites = CobysCurrencySearcher.Favorites
