@@ -46,12 +46,10 @@ local base = CobySuite_CobysCurrencySearcher.Config.New({
   },
   quietKeys = { "saved_filters" },
   debug = CobysCurrencySearcher.Debug,
-  onSet = function(name, old, value)
-    CobysCurrencySearcher.EventBus:Fire(CobysCurrencySearcher.Events.ConfigChanged, name, value, old)
-  end,
-  onReset = function()
-    CobysCurrencySearcher.EventBus:Fire(CobysCurrencySearcher.Events.ConfigChanged)
-  end,
+  -- Set fires ConfigChanged (name, value, old) and Reset fires it alone
+  bus = CobysCurrencySearcher.EventBus,
+  event = CobysCurrencySearcher.Events.ConfigChanged,
+  ensureTables = { "COBYS_CURRENCY_SEARCHER_WINDOW_STATE", "COBYS_CURRENCY_SEARCHER_FAVORITES" },
 })
 
 -- Install onto the CobysCurrencySearcher.Config namespace
@@ -60,6 +58,7 @@ Config.Defaults      = base.Defaults
 Config.CheckValue    = base.CheckValue
 Config.Get           = base.Get
 Config.Set           = base.Set
+Config.HadSavedData  = base.HadSavedData   -- settings were saved before this login (What's New's existing install)
 
 ---------------------------------------------------------------------------
 -- InitializeData: wraps base with addon-specific SavedVariable init
@@ -67,13 +66,8 @@ Config.Set           = base.Set
 function Config.InitializeData()
   base.InitializeData()
 
-  -- Anything but a table here is a damaged file: start that table over
-  if type(COBYS_CURRENCY_SEARCHER_WINDOW_STATE) ~= "table" then
-    COBYS_CURRENCY_SEARCHER_WINDOW_STATE = {}
-  end
-  if type(COBYS_CURRENCY_SEARCHER_FAVORITES) ~= "table" then
-    COBYS_CURRENCY_SEARCHER_FAVORITES = {}
-  end
+  -- Anything but a table in the window state or the favorites is a damaged
+  -- file: ensureTables started it over
   if type(COBYS_CURRENCY_SEARCHER_CONFIG.saved_filters) ~= "table" then
     COBYS_CURRENCY_SEARCHER_CONFIG.saved_filters = {}
   end

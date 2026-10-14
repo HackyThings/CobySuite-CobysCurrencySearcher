@@ -25,7 +25,7 @@ local changelog = CobySuite_CobysCurrencySearcher.UI.CreateWhatsNewWindow({
   version = CobysCurrencySearcher.VERSION,
   state = function() return COBYS_CURRENCY_SEARCHER_WINDOW_STATE end,
   onFirstRun = function() if CobysCurrencySearcher.Guide then CobysCurrencySearcher.Guide.Show() end end,
-  existingInstall = function() return CobysCurrencySearcher.hadSavedConfig == true end,
+  existingInstall = function() return CobysCurrencySearcher.Config.HadSavedData() end,
   combatMessage = function(text) CobysCurrencySearcher.Utilities.Message(text) end,
   onShow = function(what) CobysCurrencySearcher.Debug.Log("UI", "Login shows the %s", what) end,
 })

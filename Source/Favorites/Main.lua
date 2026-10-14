@@ -9,6 +9,7 @@
 -------------------------------------------------------------------------------
 
 local Debug = CobysCurrencySearcher.Debug
+local U = CobySuite_CobysCurrencySearcher.Utilities
 
 local Favorites = {}
 CobysCurrencySearcher.Favorites = Favorites
@@ -47,8 +48,7 @@ end
 -- confirmation): one write and one event, so the search refreshes once.
 -- Returns how many were removed.
 function Favorites.ClearAll()
-  local removed = 0   -- the saved set, even while a preview shows another
-  for _ in pairs(Store()) do removed = removed + 1 end
+  local removed = U.TableCount(Store())   -- the saved set, even while a preview shows another
   wipe(Store())
   Debug.Log("FAVORITES", "Cleared all %d favorites", removed)
   CobysCurrencySearcher.EventBus:Fire(CobysCurrencySearcher.Events.FavoritesChanged, nil)
@@ -56,9 +56,5 @@ function Favorites.ClearAll()
 end
 
 function Favorites.Count()
-  local n = 0
-  for _ in pairs(previewSet or Store()) do
-    n = n + 1
-  end
-  return n
+  return U.TableCount(previewSet or Store())
 end

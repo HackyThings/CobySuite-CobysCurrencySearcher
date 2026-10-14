@@ -1,2 +1,2 @@
 -- Written by the release build. Identifies this embedded copy of the shared library.
-CobySuite_CobysCurrencySearcher.BuildInfo = { embedded = true, host = "CobysCurrencySearcher", commit = "bd3effe", dirty = false, media = "Interface\\AddOns\\CobysCurrencySearcher\\Libs\\CobySuite\\Media\\" }
+CobySuite_CobysCurrencySearcher.BuildInfo = { embedded = true, host = "CobysCurrencySearcher", commit = "4017778", dirty = false, media = "Interface\\AddOns\\CobysCurrencySearcher\\Libs\\CobySuite\\Media\\" }

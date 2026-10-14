@@ -4,6 +4,12 @@ All notable changes to Coby's Currency Searcher are documented here. Format foll
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-10-13
+
+### Changed
+
+- Updated for World of Warcraft patch 12.1.5.
+
 ## [1.0.7] - 2026-10-11
 
 ### Added
@@ -134,7 +140,8 @@ Initial release of Coby's Currency Searcher.
 - "Match descriptions too" option to search description text as well as names.
 - `/ccs <text>` searches the Currency tab for the text, or arms the search until you open the tab; `/ccs settings`, `/ccs debug`, `/ccs version`, `/ccs help`.
 
-[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.8
 [1.0.7]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.7
 [1.0.6]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.6
 [1.0.5]: https://github.com/HackyThings/CobySuite-CobysCurrencySearcher/releases/tag/v1.0.5

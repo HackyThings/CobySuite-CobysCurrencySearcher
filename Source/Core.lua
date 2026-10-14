@@ -133,10 +133,6 @@ function CobysCurrencySearcher_OnAddonCompartmentLeave() launcher:OnCompartmentL
 -- Startup sequence
 -------------------------------------------------------------------------------
 EventUtil.ContinueOnAddOnLoaded(ADDON_NAME, function()
-  -- Settings saved before this login mean a player of an earlier release:
-  -- What's New records the version instead of opening the new-player guide
-  CobysCurrencySearcher.hadSavedConfig = type(COBYS_CURRENCY_SEARCHER_CONFIG) == "table"
-    and next(COBYS_CURRENCY_SEARCHER_CONFIG) ~= nil
   if CobysCurrencySearcher.Config.InitializeData then
     CobysCurrencySearcher.Config.InitializeData()
   end
